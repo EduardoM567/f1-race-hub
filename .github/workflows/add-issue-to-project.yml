@@ -1,0 +1,63 @@
+name: Add Issue To Project
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: read
+  contents: read
+
+jobs:
+  add-issue-to-project:
+    name: Add Issue To Project Board
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Add issue to configured GitHub Project
+        env:
+          GH_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
+          COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
+          COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GH_TOKEN" ] || [ -z "$COURSE_PROJECT_OWNER" ] || [ -z "$COURSE_PROJECT_NUMBER" ]; then
+            echo "Skipping project add because COURSE_PROJECT_TOKEN, COURSE_PROJECT_OWNER, or COURSE_PROJECT_NUMBER is not configured."
+            exit 0
+          fi
+
+          PROJECT_ID="$(gh project view "$COURSE_PROJECT_NUMBER" \
+            --owner "$COURSE_PROJECT_OWNER" \
+            --format json \
+            --jq '.id')"
+
+          ITEM_ID="$(gh project item-add "$COURSE_PROJECT_NUMBER" \
+            --owner "$COURSE_PROJECT_OWNER" \
+            --url "$ISSUE_URL" \
+            --format json \
+            --jq '.id')"
+
+          STATUS_FIELD_ID="$(gh project field-list "$COURSE_PROJECT_NUMBER" \
+            --owner "$COURSE_PROJECT_OWNER" \
+            --format json \
+            --limit 100 \
+            --jq '.fields[] | select(.name == "Status") | .id')"
+
+          TODO_OPTION_ID="$(gh project field-list "$COURSE_PROJECT_NUMBER" \
+            --owner "$COURSE_PROJECT_OWNER" \
+            --format json \
+            --limit 100 \
+            --jq '.fields[] | select(.name == "Status") | .options[] | select(.name == "Todo") | .id')"
+
+          if [ -z "$PROJECT_ID" ] || [ -z "$ITEM_ID" ] || [ -z "$STATUS_FIELD_ID" ] || [ -z "$TODO_OPTION_ID" ]; then
+            echo "Could not set project Status to Todo because the project item, Status field, or Todo option could not be resolved."
+            exit 1
+          fi
+
+          gh project item-edit \
+            --id "$ITEM_ID" \
+            --project-id "$PROJECT_ID" \
+            --field-id "$STATUS_FIELD_ID" \
+            --single-select-option-id "$TODO_OPTION_ID"

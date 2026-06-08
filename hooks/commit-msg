@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+commit_msg_file="$1"
+first_line="$(head -n 1 "$commit_msg_file")"
+
+# UCID format: 2-4 letters followed by optional digits, then a colon and a space.
+ucid="$(printf '%s\n' "$first_line" | sed -nE 's/^([A-Za-z]{2,4}[0-9]{0,4}): .+/\1/p' | tr '[:upper:]' '[:lower:]')"
+
+case "$ucid" in
+  bug|chore|ci|doc|docs|feat|fix|hotfix|issue|task|test)
+    ucid=""
+    ;;
+esac
+
+if [ -z "$ucid" ]; then
+  echo "WARNING: Commit message does not start with a UCID prefix."
+  echo "At least one commit in the final PR must use a prefix like: mt85: add login form validation"
+fi
+
+exit 0

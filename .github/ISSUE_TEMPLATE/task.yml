@@ -1,0 +1,51 @@
+name: Task / Feature / Bug
+description: Create work that must be claimed, tracked, and completed through a pull request.
+title: "[Task]: "
+labels:
+  - status:ready
+body:
+  - type: input
+    id: claimed_by
+    attributes:
+      label: Claimed by UCID
+      description: Recommended for ownership metadata. Use your official NJIT UCID, such as mt85 or another official 2-4 letter UCID with optional digits.
+      placeholder: mt85
+    validations:
+      required: false
+
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: Work Type
+      description: After creating the issue, also select the matching GitHub `type:*` label from the label sidebar. This dropdown does not apply the label automatically.
+      options:
+        - feature
+        - bug
+        - task
+        - documentation
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **Required label step:** after submitting this issue, select the matching GitHub `type:*` label from the label sidebar (`type:feature`, `type:bug`, `type:task`, or `type:documentation`).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List what must be true for this issue to be considered complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true

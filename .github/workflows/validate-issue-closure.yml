@@ -1,0 +1,183 @@
+name: Validate Issue Closure
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-issue-closure:
+    name: Validate Issue Closure Requirements
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate label and project before closure
+        uses: actions/github-script@v7
+        env:
+          COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
+          COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
+          COURSE_PROJECT_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
+        with:
+          github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(label => label.name);
+            const issueBody = issue.body || "";
+            const errors = [];
+            const recommendations = [];
+
+            const ucidCore = "[a-z]{2,4}\\d{0,4}";
+            const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:\\s*(${ucidCore})\\b`, "i");
+
+            if (!ucidClaimPattern.test(issueBody)) {
+              recommendations.push("Recommended: include `Claimed by UCID: yourucid` in the issue body for clearer ownership metadata.");
+            }
+
+            if (!Array.isArray(issue.assignees) || issue.assignees.length === 0) {
+              errors.push("Issue must have at least one assigned user before it can stay closed.");
+            }
+
+            if (labels.length === 0) {
+              errors.push("Issue must have at least one label before it can stay closed.");
+            }
+
+            if (!labels.some(label => String(label).toLowerCase().startsWith("type:"))) {
+              errors.push("Issue must have at least one `type:*` label before it can stay closed.");
+            }
+
+            const projectOwner = process.env.COURSE_PROJECT_OWNER;
+            const projectNumberRaw = process.env.COURSE_PROJECT_NUMBER;
+            const hasProjectConfig = Boolean(projectOwner && projectNumberRaw);
+
+            if (hasProjectConfig) {
+              const projectNumber = Number(projectNumberRaw);
+
+              const projectQuery = `
+                query($owner: String!, $number: Int!) {
+                  repositoryOwner(login: $owner) {
+                    ... on User {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                    ... on Organization {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const projectResult = await github.graphql(projectQuery, {
+                owner: projectOwner,
+                number: projectNumber
+              });
+
+              const project = projectResult.repositoryOwner?.projectV2;
+              if (!project?.id) {
+                errors.push(`Configured project ${projectOwner} #${projectNumber} could not be found.`);
+              } else {
+                const itemQuery = `
+                  query($issueId: ID!) {
+                    node(id: $issueId) {
+                      ... on Issue {
+                        projectItems(first: 100) {
+                          nodes {
+                            project { id title }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `;
+
+                const itemResult = await github.graphql(itemQuery, {
+                  issueId: issue.node_id
+                });
+
+                const projectItems = itemResult.node?.projectItems?.nodes || [];
+                const found = projectItems.some(item => item.project?.id === project.id);
+
+                if (!found) {
+                  errors.push(`Issue must be attached to project board: ${project.title}.`);
+                }
+              }
+            } else {
+              errors.push("Project check is not configured. Set repo variables COURSE_PROJECT_OWNER and COURSE_PROJECT_NUMBER, plus optional secret COURSE_PROJECT_TOKEN.");
+            }
+
+            const closureQuery = `
+              query($issueId: ID!) {
+                node(id: $issueId) {
+                  ... on Issue {
+                    closedByPullRequestsReferences(first: 20) {
+                      nodes {
+                        number
+                        mergedAt
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const closureResult = await github.graphql(closureQuery, {
+              issueId: issue.node_id
+            });
+
+            const closingPRs = closureResult.node?.closedByPullRequestsReferences?.nodes || [];
+            const mergedClosingPR = closingPRs.find(pr => Boolean(pr.mergedAt));
+
+            if (!mergedClosingPR) {
+              errors.push("Issue must be closed through a merged pull request that links this issue with a closing keyword (for example: `Closes #12`).");
+            }
+
+            if (errors.length === 0) {
+              if (recommendations.length > 0) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body:
+                    "Workflow recommendation:\n\n" +
+                    recommendations.map(text => `- ${text}`).join("\n")
+                });
+              }
+              return;
+            }
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              state: "open"
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ["status:needs-fix"]
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body:
+                "This issue was reopened because it was closed before meeting the course workflow requirements:\n\n" +
+                errors.map(error => `- ${error}`).join("\n") +
+                (recommendations.length > 0
+                  ? "\n\nAdditional recommendations:\n" + recommendations.map(text => `- ${text}`).join("\n")
+                  : "") +
+                "\n\nAfter fixing the items above, close the issue again."
+            });
+
+            core.setFailed(errors.join("\n"));
