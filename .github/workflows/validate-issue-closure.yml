@@ -33,6 +33,10 @@ jobs:
             const ucidCore = "[a-z]{2,4}\\d{0,4}";
             const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:\\s*(${ucidCore})\\b`, "i");
 
+            function escapeRegExp(value) {
+              return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            }
+
             if (!ucidClaimPattern.test(issueBody)) {
               recommendations.push("Recommended: include `Claimed by UCID: yourucid` in the issue body for clearer ownership metadata.");
             }
@@ -134,8 +138,45 @@ jobs:
 
             const closingPRs = closureResult.node?.closedByPullRequestsReferences?.nodes || [];
             const mergedClosingPR = closingPRs.find(pr => Boolean(pr.mergedAt));
+            let hasMergedClosingPullRequest = Boolean(mergedClosingPR);
 
-            if (!mergedClosingPR) {
+            if (!hasMergedClosingPullRequest) {
+              const repoReference = escapeRegExp(`${context.repo.owner}/${context.repo.repo}`);
+              const closingKeywordPattern = new RegExp(
+                `\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s*:?\\s+(?:${repoReference}#|#)${issue.number}\\b`,
+                "i"
+              );
+              const fallbackClosingPullRequestQuery = `
+                query($owner: String!, $repo: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequests(first: 100, states: MERGED, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                      nodes {
+                        number
+                        mergedAt
+                        body
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const fallbackClosingPullRequestResult = await github.graphql(fallbackClosingPullRequestQuery, {
+                owner: context.repo.owner,
+                repo: context.repo.repo
+              });
+
+              const fallbackClosingPullRequests = fallbackClosingPullRequestResult.repository?.pullRequests?.nodes || [];
+              const fallbackClosingPullRequest = fallbackClosingPullRequests.find(pr =>
+                Boolean(pr.mergedAt) && closingKeywordPattern.test(pr.body || "")
+              );
+              hasMergedClosingPullRequest = Boolean(fallbackClosingPullRequest);
+
+              if (fallbackClosingPullRequest) {
+                core.info(`Issue #${issue.number} matched merged PR #${fallbackClosingPullRequest.number} by closing keyword fallback.`);
+              }
+            }
+
+            if (!hasMergedClosingPullRequest) {
               errors.push("Issue must be closed through a merged pull request that links this issue with a closing keyword (for example: `Closes #12`).");
             }
 
