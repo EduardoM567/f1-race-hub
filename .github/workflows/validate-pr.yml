@@ -30,6 +30,15 @@ jobs:
             const requestedReviewers = (pr.requested_reviewers || []).map(user => user.login).filter(Boolean);
             const branchName = pr.head.ref || "";
             const errors = [];
+            const isOwnerMaintenancePr =
+              branchName.startsWith("course-maintenance/") &&
+              pr.author_association === "OWNER" &&
+              pr.head.repo?.full_name === pr.base.repo?.full_name;
+
+            if (isOwnerMaintenancePr) {
+              core.info("Skipping student PR validation for owner-authored course-maintenance branch.");
+              return;
+            }
 
             // NJIT-style UCID format: 2-4 letters followed by optional digits.
             const ucidCore = "[a-z]{2,4}\\d{0,4}";

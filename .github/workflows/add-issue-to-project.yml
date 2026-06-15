@@ -15,49 +15,157 @@ jobs:
 
     steps:
       - name: Add issue to configured GitHub Project
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
+          COURSE_PROJECT_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
           COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
           COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
-          ISSUE_URL: ${{ github.event.issue.html_url }}
-        run: |
-          set -euo pipefail
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+        with:
+          github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
+          script: |
+            const projectOwner = process.env.COURSE_PROJECT_OWNER;
+            const projectNumberRaw = process.env.COURSE_PROJECT_NUMBER;
+            const issueNodeId = process.env.ISSUE_NODE_ID;
 
-          if [ -z "$GH_TOKEN" ] || [ -z "$COURSE_PROJECT_OWNER" ] || [ -z "$COURSE_PROJECT_NUMBER" ]; then
-            echo "Skipping project add because COURSE_PROJECT_TOKEN, COURSE_PROJECT_OWNER, or COURSE_PROJECT_NUMBER is not configured."
-            exit 0
-          fi
+            if (!process.env.COURSE_PROJECT_TOKEN || !projectOwner || !projectNumberRaw || !issueNodeId) {
+              core.info("Skipping project add because COURSE_PROJECT_TOKEN, COURSE_PROJECT_OWNER, COURSE_PROJECT_NUMBER, or issue node id is not configured.");
+              return;
+            }
 
-          PROJECT_ID="$(gh project view "$COURSE_PROJECT_NUMBER" \
-            --owner "$COURSE_PROJECT_OWNER" \
-            --format json \
-            --jq '.id')"
+            const projectNumber = Number(projectNumberRaw);
+            if (!Number.isInteger(projectNumber)) {
+              throw new Error(`COURSE_PROJECT_NUMBER must be an integer. Current value: ${projectNumberRaw}`);
+            }
 
-          ITEM_ID="$(gh project item-add "$COURSE_PROJECT_NUMBER" \
-            --owner "$COURSE_PROJECT_OWNER" \
-            --url "$ISSUE_URL" \
-            --format json \
-            --jq '.id')"
+            const projectQuery = `
+              query($owner: String!, $number: Int!) {
+                repositoryOwner(login: $owner) {
+                  ... on User {
+                    projectV2(number: $number) {
+                      id
+                      title
+                      fields(first: 100) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options {
+                              id
+                              name
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  ... on Organization {
+                    projectV2(number: $number) {
+                      id
+                      title
+                      fields(first: 100) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options {
+                              id
+                              name
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
 
-          STATUS_FIELD_ID="$(gh project field-list "$COURSE_PROJECT_NUMBER" \
-            --owner "$COURSE_PROJECT_OWNER" \
-            --format json \
-            --limit 100 \
-            --jq '.fields[] | select(.name == "Status") | .id')"
+            const projectResult = await github.graphql(projectQuery, {
+              owner: projectOwner,
+              number: projectNumber
+            });
 
-          TODO_OPTION_ID="$(gh project field-list "$COURSE_PROJECT_NUMBER" \
-            --owner "$COURSE_PROJECT_OWNER" \
-            --format json \
-            --limit 100 \
-            --jq '.fields[] | select(.name == "Status") | .options[] | select(.name == "Todo") | .id')"
+            const project = projectResult.repositoryOwner?.projectV2;
+            if (!project?.id) {
+              throw new Error(`Configured project ${projectOwner} #${projectNumber} could not be found.`);
+            }
 
-          if [ -z "$PROJECT_ID" ] || [ -z "$ITEM_ID" ] || [ -z "$STATUS_FIELD_ID" ] || [ -z "$TODO_OPTION_ID" ]; then
-            echo "Could not set project Status to Todo because the project item, Status field, or Todo option could not be resolved."
-            exit 1
-          fi
+            const statusField = (project.fields?.nodes || []).find(field => field?.name === "Status");
+            const todoOption = statusField?.options?.find(option => option.name === "Todo");
+            if (!statusField?.id || !todoOption?.id) {
+              throw new Error(`Could not resolve Status field and Todo option for project: ${project.title}.`);
+            }
 
-          gh project item-edit \
-            --id "$ITEM_ID" \
-            --project-id "$PROJECT_ID" \
-            --field-id "$STATUS_FIELD_ID" \
-            --single-select-option-id "$TODO_OPTION_ID"
+            const existingItemQuery = `
+              query($issueId: ID!) {
+                node(id: $issueId) {
+                  ... on Issue {
+                    projectItems(first: 100) {
+                      nodes {
+                        id
+                        project {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const existingItemResult = await github.graphql(existingItemQuery, {
+              issueId: issueNodeId
+            });
+
+            const existingItems = existingItemResult.node?.projectItems?.nodes || [];
+            let itemId = existingItems.find(item => item.project?.id === project.id)?.id || "";
+
+            if (!itemId) {
+              const addItemMutation = `
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+                    item {
+                      id
+                    }
+                  }
+                }
+              `;
+
+              const addItemResult = await github.graphql(addItemMutation, {
+                projectId: project.id,
+                contentId: issueNodeId
+              });
+
+              itemId = addItemResult.addProjectV2ItemById?.item?.id || "";
+            }
+
+            if (!itemId) {
+              throw new Error(`Could not add issue to project board: ${project.title}.`);
+            }
+
+            const updateStatusMutation = `
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: {
+                    singleSelectOptionId: $optionId
+                  }
+                }) {
+                  projectV2Item {
+                    id
+                  }
+                }
+              }
+            `;
+
+            await github.graphql(updateStatusMutation, {
+              projectId: project.id,
+              itemId,
+              fieldId: statusField.id,
+              optionId: todoOption.id
+            });
+
+            core.info(`Added issue to ${project.title} and set Status to Todo.`);
