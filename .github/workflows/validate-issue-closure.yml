@@ -25,13 +25,19 @@ jobs:
           github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
           script: |
             const issue = context.payload.issue;
+            const stateReason = String(issue.state_reason || "").toLowerCase();
+
+            if (stateReason !== "completed") {
+              core.info(`Skipping issue closure validation because issue was closed as: ${stateReason || "unspecified"}.`);
+              return;
+            }
+
+            const ucidCore = "[a-z]{2,4}\\d{0,4}";
+            const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:\\s*(${ucidCore})\\b`, "i");
             const labels = issue.labels.map(label => label.name);
             const issueBody = issue.body || "";
             const errors = [];
             const recommendations = [];
-
-            const ucidCore = "[a-z]{2,4}\\d{0,4}";
-            const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:\\s*(${ucidCore})\\b`, "i");
 
             function escapeRegExp(value) {
               return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
