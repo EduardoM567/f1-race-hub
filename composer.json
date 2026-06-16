@@ -1,0 +1,12 @@
+{
+    "name": "matt-toegel/it490-2026-rabbitmq-sample",
+    "description": "Minimal IT490 RabbitMQ request/response sample.",
+    "type": "project",
+    "require": {
+        "php": ">=8.4",
+        "php-amqplib/php-amqplib": "^3.7"
+    },
+    "scripts": {
+        "setup": "bash setup.sh"
+    }
+}
