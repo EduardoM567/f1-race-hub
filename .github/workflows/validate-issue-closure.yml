@@ -4,6 +4,10 @@ on:
   issues:
     types: [closed]
 
+concurrency:
+  group: validate-issue-closure-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 permissions:
   issues: write
   contents: read
@@ -24,7 +28,19 @@ jobs:
         with:
           github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
           script: |
-            const issue = context.payload.issue;
+            const eventIssue = context.payload.issue;
+            const { owner, repo } = context.repo;
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: eventIssue.number
+            });
+
+            if (issue.state !== "closed") {
+              core.info(`Skipping issue closure validation because issue is currently: ${issue.state}.`);
+              return;
+            }
+
             const stateReason = String(issue.state_reason || "").toLowerCase();
 
             if (stateReason !== "completed") {
@@ -32,31 +48,129 @@ jobs:
               return;
             }
 
+            const CHECKLIST_MARKER = "<!-- course-issue-closure-checklist -->";
             const ucidCore = "[a-z]{2,4}\\d{0,4}";
-            const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:\\s*(${ucidCore})\\b`, "i");
-            const labels = issue.labels.map(label => label.name);
+            const ucidClaimPattern = new RegExp(`claimed\\s+by\\s+ucid\\s*:?\\s*(${ucidCore})\\b`, "i");
+            const labels = (issue.labels || []).map(label => label.name);
             const issueBody = issue.body || "";
+            const checks = [];
             const errors = [];
             const recommendations = [];
 
-            function escapeRegExp(value) {
-              return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            function addCheck(status, title, detail) {
+              checks.push({ status, title, detail });
+              core.info(`${status}: ${title} - ${detail}`);
+              if (status === "FAIL") {
+                errors.push(`${title}: ${detail}`);
+              }
+            }
+
+            function pass(title, detail) {
+              addCheck("PASS", title, detail);
+            }
+
+            function fail(title, detail) {
+              addCheck("FAIL", title, detail);
+            }
+
+            function warn(title, detail) {
+              addCheck("WARN", title, detail);
+            }
+
+            function formatList(values, emptyText) {
+              return values.length > 0 ? values.join(", ") : emptyText;
+            }
+
+            function formatIssueList(issues) {
+              return issues
+                .slice(0, 10)
+                .map(item => `#${item.number}`)
+                .join(", ");
+            }
+
+            function extractClosingIssueReferences(body) {
+              const references = new Set();
+              const currentRepo = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              // Intentionally supports comma shorthand like "Closes #1, #2" for automation recovery.
+              const closingReferenceGroupPattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+((?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b(?:\s*,\s*(?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b)*)/gi;
+              const referencePattern = /(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)(\d+)\b/g;
+
+              for (const groupMatch of String(body || "").matchAll(closingReferenceGroupPattern)) {
+                for (const match of groupMatch[1].matchAll(referencePattern)) {
+                  const repo = match[1] ? match[1].toLowerCase() : currentRepo;
+                  if (repo === currentRepo) {
+                    references.add(Number(match[2]));
+                  }
+                }
+              }
+
+              return references;
+            }
+
+            function buildChecklistComment() {
+              const statusLine = errors.length === 0
+                ? "Course issue closure checklist: passed"
+                : "Course issue closure checklist: needs fixes";
+              const lines = [
+                CHECKLIST_MARKER,
+                statusLine,
+                "",
+                ...checks.map(check => `- ${check.status}: ${check.title} - ${check.detail}`)
+              ];
+
+              if (recommendations.length > 0) {
+                lines.push("", "Recommendations:");
+                for (const recommendation of recommendations) {
+                  lines.push(`- ${recommendation}`);
+                }
+              }
+
+              if (errors.length > 0) {
+                lines.push(
+                  "",
+                  "This issue was reopened because it was closed before meeting the course workflow requirements.",
+                  "After fixing the failed items above, close the issue again."
+                );
+              } else {
+                lines.push("", "This issue passed the course closure checks and can stay closed.");
+              }
+
+              return lines.join("\n");
+            }
+
+            async function createChecklistComment(body) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body
+              });
             }
 
             if (!ucidClaimPattern.test(issueBody)) {
               recommendations.push("Recommended: include `Claimed by UCID: yourucid` in the issue body for clearer ownership metadata.");
             }
 
-            if (!Array.isArray(issue.assignees) || issue.assignees.length === 0) {
-              errors.push("Issue must have at least one assigned user before it can stay closed.");
+            const assignees = Array.isArray(issue.assignees)
+              ? issue.assignees.map(user => user.login).filter(Boolean)
+              : [];
+            if (assignees.length === 0) {
+              fail("Assignee", "Issue must have at least one assigned user before it can stay closed.");
+            } else {
+              pass("Assignee", `Assigned to ${formatList(assignees, "no one")}.`);
             }
 
             if (labels.length === 0) {
-              errors.push("Issue must have at least one label before it can stay closed.");
+              fail("Labels", "Issue must have at least one label before it can stay closed.");
+            } else {
+              pass("Labels", `Labels found: ${formatList(labels, "none")}.`);
             }
 
-            if (!labels.some(label => String(label).toLowerCase().startsWith("type:"))) {
-              errors.push("Issue must have at least one `type:*` label before it can stay closed.");
+            const typeLabels = labels.filter(label => String(label).toLowerCase().startsWith("type:"));
+            if (typeLabels.length === 0) {
+              fail("Type label", "Issue must have at least one `type:*` label before it can stay closed.");
+            } else {
+              pass("Type label", `Type label found: ${formatList(typeLabels, "none")}.`);
             }
 
             const projectOwner = process.env.COURSE_PROJECT_OWNER;
@@ -92,7 +206,7 @@ jobs:
 
               const project = projectResult.repositoryOwner?.projectV2;
               if (!project?.id) {
-                errors.push(`Configured project ${projectOwner} #${projectNumber} could not be found.`);
+                fail("Project board", `Configured project ${projectOwner} #${projectNumber} could not be found.`);
               } else {
                 const itemQuery = `
                   query($issueId: ID!) {
@@ -116,11 +230,13 @@ jobs:
                 const found = projectItems.some(item => item.project?.id === project.id);
 
                 if (!found) {
-                  errors.push(`Issue must be attached to project board: ${project.title}.`);
+                  fail("Project board", `Issue must be attached to project board: ${project.title}.`);
+                } else {
+                  pass("Project board", `Issue is attached to project board: ${project.title}.`);
                 }
               }
             } else {
-              errors.push("Project check is not configured. Set repo variables COURSE_PROJECT_OWNER and COURSE_PROJECT_NUMBER, plus optional secret COURSE_PROJECT_TOKEN.");
+              fail("Project board", "Project check is not configured. Set repo variables COURSE_PROJECT_OWNER and COURSE_PROJECT_NUMBER, plus optional secret COURSE_PROJECT_TOKEN.");
             }
 
             const closureQuery = `
@@ -131,6 +247,21 @@ jobs:
                       nodes {
                         number
                         mergedAt
+                        url
+                      }
+                    }
+                    subIssuesSummary {
+                      total
+                      completed
+                      percentCompleted
+                    }
+                    subIssues(first: 50) {
+                      nodes {
+                        number
+                        title
+                        state
+                        stateReason
+                        url
                       }
                     }
                   }
@@ -142,16 +273,14 @@ jobs:
               issueId: issue.node_id
             });
 
-            const closingPRs = closureResult.node?.closedByPullRequestsReferences?.nodes || [];
+            const issueDetails = closureResult.node || {};
+            const closingPRs = issueDetails.closedByPullRequestsReferences?.nodes || [];
             const mergedClosingPR = closingPRs.find(pr => Boolean(pr.mergedAt));
             let hasMergedClosingPullRequest = Boolean(mergedClosingPR);
 
-            if (!hasMergedClosingPullRequest) {
-              const repoReference = escapeRegExp(`${context.repo.owner}/${context.repo.repo}`);
-              const closingKeywordPattern = new RegExp(
-                `\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s*:?\\s+(?:${repoReference}#|#)${issue.number}\\b`,
-                "i"
-              );
+            if (hasMergedClosingPullRequest) {
+              pass("Merged closing PR", `GitHub linked merged PR #${mergedClosingPR.number}.`);
+            } else {
               const fallbackClosingPullRequestQuery = `
                 query($owner: String!, $repo: String!) {
                   repository(owner: $owner, name: $repo) {
@@ -172,31 +301,39 @@ jobs:
               });
 
               const fallbackClosingPullRequests = fallbackClosingPullRequestResult.repository?.pullRequests?.nodes || [];
-              const fallbackClosingPullRequest = fallbackClosingPullRequests.find(pr =>
-                Boolean(pr.mergedAt) && closingKeywordPattern.test(pr.body || "")
-              );
+              const fallbackClosingPullRequest = fallbackClosingPullRequests.find(pr => {
+                const closingIssueReferences = extractClosingIssueReferences(pr.body || "");
+                return Boolean(pr.mergedAt) && closingIssueReferences.has(issue.number);
+              });
               hasMergedClosingPullRequest = Boolean(fallbackClosingPullRequest);
 
               if (fallbackClosingPullRequest) {
                 core.info(`Issue #${issue.number} matched merged PR #${fallbackClosingPullRequest.number} by closing keyword fallback.`);
+                pass("Merged closing PR", `Matched merged PR #${fallbackClosingPullRequest.number} by PR-body closing keyword fallback.`);
               }
             }
 
             if (!hasMergedClosingPullRequest) {
-              errors.push("Issue must be closed through a merged pull request that links this issue with a closing keyword (for example: `Closes #12`).");
+              fail("Merged closing PR", "Issue must be closed through a merged pull request that links this issue with a closing keyword (for example: `Closes #12`).");
             }
 
+            const subIssues = issueDetails.subIssues?.nodes || [];
+            const openSubIssues = subIssues.filter(subIssue => subIssue.state !== "CLOSED");
+            if (subIssues.length === 0) {
+              pass("Direct sub-issues", "No direct sub-issues found.");
+            } else if (openSubIssues.length === 0) {
+              pass("Direct sub-issues", `All ${subIssues.length} direct sub-issue(s) are closed.`);
+            } else {
+              warn(
+                "Direct sub-issues",
+                `${openSubIssues.length} of ${subIssues.length} direct sub-issue(s) are still open: ${formatIssueList(openSubIssues)}.`
+              );
+            }
+
+            const checklistComment = buildChecklistComment();
+
             if (errors.length === 0) {
-              if (recommendations.length > 0) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  body:
-                    "Workflow recommendation:\n\n" +
-                    recommendations.map(text => `- ${text}`).join("\n")
-                });
-              }
+              await createChecklistComment(checklistComment);
               return;
             }
 
@@ -214,17 +351,6 @@ jobs:
               labels: ["status:needs-fix"]
             });
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              body:
-                "This issue was reopened because it was closed before meeting the course workflow requirements:\n\n" +
-                errors.map(error => `- ${error}`).join("\n") +
-                (recommendations.length > 0
-                  ? "\n\nAdditional recommendations:\n" + recommendations.map(text => `- ${text}`).join("\n")
-                  : "") +
-                "\n\nAfter fixing the items above, close the issue again."
-            });
+            await createChecklistComment(checklistComment);
 
             core.setFailed(errors.join("\n"));

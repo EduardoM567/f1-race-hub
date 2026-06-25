@@ -1,0 +1,461 @@
+name: Course PR Command
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: course-pr-command-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  course-pr-command:
+    name: Course PR Comment Command
+    if: >-
+      ${{
+        github.event.issue.pull_request &&
+        github.event.comment.user.type != 'Bot' &&
+        !contains(github.event.comment.body, '<!-- course-pr-command-report -->') &&
+        !contains(github.event.comment.body, '<!-- course-pr-linked-issue-readiness -->') &&
+        !contains(github.event.comment.body, '<!-- course-linked-issue-closure-report -->')
+      }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run course PR comment command
+        uses: actions/github-script@v7
+        env:
+          COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
+          COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
+          COURSE_PROJECT_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
+        with:
+          github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
+          script: |
+            const eventIssue = context.payload.issue;
+            const comment = context.payload.comment;
+            const prNumber = eventIssue.number;
+            const { owner, repo } = context.repo;
+            const allowedAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+            const REPORT_MARKER = "<!-- course-pr-command-report -->";
+            const generatedReportMarkers = [
+              REPORT_MARKER.toLowerCase(),
+              "<!-- course-pr-linked-issue-readiness -->",
+              "<!-- course-linked-issue-closure-report -->"
+            ];
+            const commandHelp = [
+              "Available command names:",
+              "- `validate` - rerun linked issue readiness checks and add an informational report.",
+              "- `close-linked-issues` - for a merged PR, rerun readiness checks and close ready linked issues as completed.",
+              "- `rerun` - validate an open PR, or close linked issues for a merged PR.",
+              "- `help` - show this help text.",
+              "",
+              "Use the repo automation slash-command prefix before one of these names when posting a new command."
+            ].join("\n");
+
+            function parseCommand(body) {
+              const normalizedBody = String(body || "").toLowerCase();
+
+              if (generatedReportMarkers.some(marker => normalizedBody.includes(marker))) {
+                core.info("Ignoring generated course PR command report comment.");
+                return { command: "", commandLine: "" };
+              }
+
+              if (normalizedBody.includes("/repo-automation close-linked-issues")) {
+                return { command: "/repo-automation close-linked-issues", commandLine: "/repo-automation close-linked-issues" };
+              }
+
+              if (normalizedBody.includes("/repo-automation validate")) {
+                return { command: "/repo-automation validate", commandLine: "/repo-automation validate" };
+              }
+
+              if (normalizedBody.includes("/repo-automation rerun")) {
+                return { command: "/repo-automation rerun", commandLine: "/repo-automation rerun" };
+              }
+
+              if (normalizedBody.includes("/repo-automation help") || normalizedBody.includes("/repo-automation")) {
+                return { command: "/repo-automation help", commandLine: "/repo-automation help" };
+              }
+
+              return { command: "", commandLine: "" };
+            }
+
+            function extractClosingIssueReferences(body) {
+              const references = new Set();
+              const currentRepo = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              // Intentionally supports comma shorthand like "Closes #1, #2" for automation recovery.
+              const closingReferenceGroupPattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+((?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b(?:\s*,\s*(?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b)*)/gi;
+              const referencePattern = /(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)(\d+)\b/g;
+
+              for (const groupMatch of String(body || "").matchAll(closingReferenceGroupPattern)) {
+                for (const match of groupMatch[1].matchAll(referencePattern)) {
+                  const repo = match[1] ? match[1].toLowerCase() : currentRepo;
+                  if (repo === currentRepo) {
+                    references.add(Number(match[2]));
+                  }
+                }
+              }
+
+              return [...references].sort((left, right) => left - right);
+            }
+
+            function formatIssueList(items) {
+              if (items.length === 0) {
+                return "- None";
+              }
+
+              return items.map(item => `- #${item.number}: ${item.detail}`).join("\n");
+            }
+
+            function formatCommandLabel(commandLine) {
+              const normalized = String(commandLine || "").trim();
+              return normalized.replace(/^\/repo-automation\s*/, "") || "help";
+            }
+
+            function buildReport({ title, commandLine, pr, sections }) {
+              return [
+                REPORT_MARKER,
+                `Course PR command report: ${title}`,
+                "",
+                `Command: \`${formatCommandLabel(commandLine)}\``,
+                `Triggered by: @${comment.user?.login || "unknown"}`,
+                `Pull request: #${pr.number} (${pr.state}${pr.merged ? ", merged" : ""})`,
+                "",
+                ...sections
+              ].join("\n");
+            }
+
+            async function createReport(body) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body
+              });
+            }
+
+            function validateIssueReadiness(issue, project) {
+              const result = { errors: [], warnings: [] };
+
+              if (!issue?.id) {
+                result.errors.push("Issue was not found in this repository.");
+                return result;
+              }
+
+              if (issue.state === "CLOSED") {
+                result.warnings.push("Issue is already closed.");
+                return result;
+              }
+
+              const issueAssignees = issue.assignees?.nodes?.map(user => user.login).filter(Boolean) || [];
+              if (issueAssignees.length === 0) {
+                result.errors.push("Issue must have at least one assignee.");
+              }
+
+              const issueLabels = issue.labels?.nodes?.map(label => label.name).filter(Boolean) || [];
+              if (issueLabels.length === 0) {
+                result.errors.push("Issue must have at least one label.");
+              }
+
+              if (!issueLabels.some(label => String(label).toLowerCase().startsWith("type:"))) {
+                result.errors.push("Issue must have at least one `type:*` label.");
+              }
+
+              if (!project.configured) {
+                result.errors.push("Project check is not configured.");
+              } else if (!project.id) {
+                result.errors.push(`Configured project ${project.owner} #${project.number} could not be found.`);
+              } else {
+                const projectItems = issue.projectItems?.nodes || [];
+                const inProject = projectItems.some(item => item.project?.id === project.id);
+                if (!inProject) {
+                  result.errors.push(`Issue must be attached to project board: ${project.title}.`);
+                }
+              }
+
+              const subIssues = issue.subIssues?.nodes || [];
+              const openSubIssues = subIssues.filter(subIssue => subIssue.state !== "CLOSED");
+              if (openSubIssues.length > 0) {
+                result.warnings.push(`Direct sub-issues still open: ${openSubIssues.map(subIssue => `#${subIssue.number}`).join(", ")}.`);
+              }
+
+              return result;
+            }
+
+            async function loadProject() {
+              const projectOwner = process.env.COURSE_PROJECT_OWNER;
+              const projectNumberRaw = process.env.COURSE_PROJECT_NUMBER;
+              const configured = Boolean(projectOwner && projectNumberRaw);
+
+              if (!configured) {
+                return { configured: false, owner: projectOwner || "", number: projectNumberRaw || "", id: "", title: "" };
+              }
+
+              const projectNumber = Number(projectNumberRaw);
+              const projectQuery = `
+                query($owner: String!, $number: Int!) {
+                  repositoryOwner(login: $owner) {
+                    ... on User {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                    ... on Organization {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+              `;
+              const projectResult = await github.graphql(projectQuery, {
+                owner: projectOwner,
+                number: projectNumber
+              });
+              const project = projectResult.repositoryOwner?.projectV2;
+
+              return {
+                configured: true,
+                owner: projectOwner,
+                number: projectNumber,
+                id: project?.id || "",
+                title: project?.title || ""
+              };
+            }
+
+            const issueQuery = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    id
+                    number
+                    title
+                    state
+                    url
+                    assignees(first: 100) {
+                      nodes { login }
+                    }
+                    labels(first: 100) {
+                      nodes { name }
+                    }
+                    projectItems(first: 100) {
+                      nodes {
+                        project { id title }
+                      }
+                    }
+                    subIssues(first: 50) {
+                      nodes {
+                        number
+                        state
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const closeIssueMutation = `
+              mutation($issueId: ID!) {
+                closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+                  issue {
+                    number
+                    state
+                    stateReason
+                    url
+                  }
+                }
+              }
+            `;
+
+            async function loadIssue(number) {
+              const issueResult = await github.graphql(issueQuery, {
+                owner,
+                repo,
+                number
+              });
+              return issueResult.repository?.issue;
+            }
+
+            async function validateLinkedIssues(issueNumbers, project) {
+              const checks = [];
+
+              if (issueNumbers.length === 0) {
+                checks.push({
+                  number: "none",
+                  detail: ":red_circle: FAIL No same-repo closing issue references were found in the PR body."
+                });
+                return checks;
+              }
+
+              for (const number of issueNumbers) {
+                try {
+                  const issue = await loadIssue(number);
+                  const readiness = validateIssueReadiness(issue, project);
+
+                  if (readiness.errors.length > 0) {
+                    checks.push({ number, detail: `:red_circle: FAIL ${readiness.errors.join("; ")}` });
+                    continue;
+                  }
+
+                  if (readiness.warnings.length > 0) {
+                    checks.push({ number, detail: `:yellow_circle: WARN ${readiness.warnings.join("; ")}` });
+                    continue;
+                  }
+
+                  checks.push({ number, detail: `:green_circle: PASS ${issue.title}` });
+                } catch (error) {
+                  checks.push({ number, detail: `:red_circle: FAIL ${error.message}` });
+                }
+              }
+
+              return checks;
+            }
+
+            async function closeLinkedIssues(issueNumbers, project, pr) {
+              const closed = [];
+              const alreadyClosed = [];
+              const failed = [];
+              const warnings = [];
+
+              if (pr.merged !== true) {
+                failed.push({
+                  number: "pr",
+                  detail: ":red_circle: FAIL Pull request must be merged before linked issues can be closed."
+                });
+                return { closed, alreadyClosed, failed, warnings };
+              }
+
+              if (issueNumbers.length === 0) {
+                failed.push({
+                  number: "none",
+                  detail: ":red_circle: FAIL No same-repo closing issue references were found in the PR body."
+                });
+                return { closed, alreadyClosed, failed, warnings };
+              }
+
+              for (const number of issueNumbers) {
+                try {
+                  const issue = await loadIssue(number);
+
+                  if (!issue?.id) {
+                    failed.push({ number, detail: ":red_circle: FAIL Issue was not found in this repository." });
+                    continue;
+                  }
+
+                  if (issue.state === "CLOSED") {
+                    alreadyClosed.push({ number, detail: `:yellow_circle: WARN ${issue.title}` });
+                    continue;
+                  }
+
+                  const readiness = validateIssueReadiness(issue, project);
+                  if (readiness.errors.length > 0) {
+                    failed.push({ number, detail: `:red_circle: FAIL Failed closure readiness: ${readiness.errors.join("; ")}` });
+                    continue;
+                  }
+
+                  if (readiness.warnings.length > 0) {
+                    warnings.push({ number, detail: `:yellow_circle: WARN ${readiness.warnings.join("; ")}` });
+                  }
+
+                  await github.graphql(closeIssueMutation, {
+                    issueId: issue.id
+                  });
+
+                  closed.push({ number, detail: `:green_circle: PASS ${issue.title}` });
+                } catch (error) {
+                  failed.push({ number, detail: `:red_circle: FAIL ${error.message}` });
+                }
+              }
+
+              return { closed, alreadyClosed, failed, warnings };
+            }
+
+            const { command, commandLine } = parseCommand(comment.body || "");
+            if (!command) {
+              core.info("Ignoring non-course PR comment.");
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber
+            });
+
+            if (!allowedAssociations.has(comment.author_association || "")) {
+              await createReport(buildReport({
+                title: "ignored",
+                commandLine,
+                pr,
+                sections: [`:yellow_circle: WARN @${comment.user?.login || "unknown"} is not allowed to run course PR commands.`]
+              }));
+              return;
+            }
+
+            if (command === "/repo-automation help" || !command) {
+              await createReport(buildReport({
+                title: "help",
+                commandLine: commandLine || "/repo-automation help",
+                pr,
+                sections: [commandHelp]
+              }));
+              return;
+            }
+
+            const supportedCommands = new Set([
+              "/repo-automation validate",
+              "/repo-automation close-linked-issues",
+              "/repo-automation rerun"
+            ]);
+
+            if (!supportedCommands.has(command)) {
+              await createReport(buildReport({
+                title: "unknown command",
+                commandLine,
+                pr,
+                sections: [`:red_circle: FAIL Unknown command: \`${formatCommandLabel(commandLine)}\`.`, "", commandHelp]
+              }));
+              return;
+            }
+
+            const issueNumbers = extractClosingIssueReferences(pr.body || "");
+            const project = await loadProject();
+
+            if (command === "/repo-automation validate" || (command === "/repo-automation rerun" && pr.merged !== true)) {
+              const checks = await validateLinkedIssues(issueNumbers, project);
+              await createReport(buildReport({
+                title: "linked issue validation",
+                commandLine,
+                pr,
+                sections: [
+                  "Linked issue readiness:",
+                  formatIssueList(checks)
+                ]
+              }));
+              return;
+            }
+
+            const result = await closeLinkedIssues(issueNumbers, project, pr);
+            await createReport(buildReport({
+              title: "linked issue closure",
+              commandLine,
+              pr,
+              sections: [
+                "Closed as completed:",
+                formatIssueList(result.closed),
+                "",
+                "Skipped because already closed:",
+                formatIssueList(result.alreadyClosed),
+                "",
+                "Warnings:",
+                formatIssueList(result.warnings),
+                "",
+                "Failed to close:",
+                formatIssueList(result.failed)
+              ]
+            }));
