@@ -1,0 +1,287 @@
+name: Close Linked Issues
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: close-linked-issues-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issues:
+    name: Close Linked Issues From Merged PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close issues referenced by closing keywords
+        uses: actions/github-script@v7
+        env:
+          COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
+          COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
+          COURSE_PROJECT_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
+        with:
+          github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
+          script: |
+            const eventPr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: eventPr.number
+            });
+
+            if (pr.merged !== true) {
+              core.info("Skipping linked issue closure because the pull request was closed without merging.");
+              return;
+            }
+
+            const REPORT_MARKER = "<!-- course-linked-issue-closure-report -->";
+
+            function extractClosingIssueReferences(body) {
+              const references = new Set();
+              const currentRepo = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              // Intentionally supports comma shorthand like "Closes #1, #2" for automation recovery.
+              const closingReferenceGroupPattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+((?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b(?:\s*,\s*(?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b)*)/gi;
+              const referencePattern = /(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)(\d+)\b/g;
+
+              for (const groupMatch of String(body || "").matchAll(closingReferenceGroupPattern)) {
+                for (const match of groupMatch[1].matchAll(referencePattern)) {
+                  const repo = match[1] ? match[1].toLowerCase() : currentRepo;
+                  if (repo === currentRepo) {
+                    references.add(Number(match[2]));
+                  }
+                }
+              }
+
+              return references;
+            }
+
+            function formatIssueList(items) {
+              if (items.length === 0) {
+                return "- None";
+              }
+
+              return items.map(item => `- #${item.number}: ${item.detail}`).join("\n");
+            }
+
+            function buildReport({ closed, alreadyClosed, failed, warnings }) {
+              return [
+                REPORT_MARKER,
+                "Linked issue closure report",
+                "",
+                "Closed as completed:",
+                formatIssueList(closed),
+                "",
+                "Skipped because already closed:",
+                formatIssueList(alreadyClosed),
+                "",
+                "Warnings:",
+                formatIssueList(warnings),
+                "",
+                "Failed to close:",
+                formatIssueList(failed)
+              ].join("\n");
+            }
+
+            async function createReport(body) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body
+              });
+            }
+
+            function validateIssueReadiness(issue, project) {
+              const result = { errors: [], warnings: [] };
+
+              if (!issue?.id) {
+                result.errors.push("Issue was not found in this repository.");
+                return result;
+              }
+
+              const issueAssignees = issue.assignees?.nodes?.map(user => user.login).filter(Boolean) || [];
+              if (issueAssignees.length === 0) {
+                result.errors.push("Issue must have at least one assignee.");
+              }
+
+              const issueLabels = issue.labels?.nodes?.map(label => label.name).filter(Boolean) || [];
+              if (issueLabels.length === 0) {
+                result.errors.push("Issue must have at least one label.");
+              }
+
+              if (!issueLabels.some(label => String(label).toLowerCase().startsWith("type:"))) {
+                result.errors.push("Issue must have at least one `type:*` label.");
+              }
+
+              if (!project.configured) {
+                result.errors.push("Project check is not configured.");
+              } else if (!project.id) {
+                result.errors.push(`Configured project ${project.owner} #${project.number} could not be found.`);
+              } else {
+                const projectItems = issue.projectItems?.nodes || [];
+                const inProject = projectItems.some(item => item.project?.id === project.id);
+                if (!inProject) {
+                  result.errors.push(`Issue must be attached to project board: ${project.title}.`);
+                }
+              }
+
+              const subIssues = issue.subIssues?.nodes || [];
+              const openSubIssues = subIssues.filter(subIssue => subIssue.state !== "CLOSED");
+              if (openSubIssues.length > 0) {
+                result.warnings.push(`Direct sub-issues still open: ${openSubIssues.map(subIssue => `#${subIssue.number}`).join(", ")}.`);
+              }
+
+              return result;
+            }
+
+            async function loadProject() {
+              const projectOwner = process.env.COURSE_PROJECT_OWNER;
+              const projectNumberRaw = process.env.COURSE_PROJECT_NUMBER;
+              const configured = Boolean(projectOwner && projectNumberRaw);
+
+              if (!configured) {
+                return { configured: false, owner: projectOwner || "", number: projectNumberRaw || "", id: "", title: "" };
+              }
+
+              const projectNumber = Number(projectNumberRaw);
+              const projectQuery = `
+                query($owner: String!, $number: Int!) {
+                  repositoryOwner(login: $owner) {
+                    ... on User {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                    ... on Organization {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+              `;
+              const projectResult = await github.graphql(projectQuery, {
+                owner: projectOwner,
+                number: projectNumber
+              });
+              const project = projectResult.repositoryOwner?.projectV2;
+
+              return {
+                configured: true,
+                owner: projectOwner,
+                number: projectNumber,
+                id: project?.id || "",
+                title: project?.title || ""
+              };
+            }
+
+            const issueNumbers = [...extractClosingIssueReferences(pr.body || "")]
+              .sort((left, right) => left - right);
+
+            if (issueNumbers.length === 0) {
+              core.info("No same-repo closing issue references found in the merged pull request body.");
+              return;
+            }
+
+            const issueQuery = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    id
+                    number
+                    title
+                    state
+                    url
+                    assignees(first: 100) {
+                      nodes { login }
+                    }
+                    labels(first: 100) {
+                      nodes { name }
+                    }
+                    projectItems(first: 100) {
+                      nodes {
+                        project { id title }
+                      }
+                    }
+                    subIssues(first: 50) {
+                      nodes {
+                        number
+                        state
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const closeIssueMutation = `
+              mutation($issueId: ID!) {
+                closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+                  issue {
+                    number
+                    state
+                    stateReason
+                    url
+                  }
+                }
+              }
+            `;
+
+            const project = await loadProject();
+            const closed = [];
+            const alreadyClosed = [];
+            const failed = [];
+            const warnings = [];
+
+            for (const number of issueNumbers) {
+              try {
+                const issueResult = await github.graphql(issueQuery, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  number
+                });
+                const issue = issueResult.repository?.issue;
+
+                if (!issue?.id) {
+                  failed.push({ number, detail: ":red_circle: FAIL Issue was not found in this repository." });
+                  continue;
+                }
+
+                if (issue.state === "CLOSED") {
+                  alreadyClosed.push({ number, detail: `:yellow_circle: WARN ${issue.title}` });
+                  continue;
+                }
+
+                const readiness = validateIssueReadiness(issue, project);
+                if (readiness.errors.length > 0) {
+                  failed.push({ number, detail: `:red_circle: FAIL Failed closure readiness: ${readiness.errors.join("; ")}` });
+                  continue;
+                }
+
+                if (readiness.warnings.length > 0) {
+                  warnings.push({ number, detail: `:yellow_circle: WARN ${readiness.warnings.join("; ")}` });
+                }
+
+                await github.graphql(closeIssueMutation, {
+                  issueId: issue.id
+                });
+
+                closed.push({ number, detail: `:green_circle: PASS ${issue.title}` });
+              } catch (error) {
+                failed.push({ number, detail: `:red_circle: FAIL ${error.message}` });
+              }
+            }
+
+            await createReport(buildReport({ closed, alreadyClosed, failed, warnings }));
+
+            if (failed.length > 0) {
+              core.setFailed(`Failed to close linked issue(s): ${failed.map(item => `#${item.number}`).join(", ")}`);
+            }

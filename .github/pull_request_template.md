@@ -6,6 +6,8 @@ Briefly describe what changed.
 
 Closes #
 
+For multiple issues, repeat the closing keyword for each issue: `Closes #issueNumber, closes #anotherIssueNumber`. Do not rely on `Closes #issueNumber, #anotherIssueNumber`.
+
 ## Checklist
 
 - [ ] This PR links to an issue using `Closes #issueNumber`
