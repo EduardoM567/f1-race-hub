@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  issues: write
   pull-requests: read
 
 jobs:
@@ -18,18 +19,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Validate PR body, assignee, reviewer, labels, branch, and commits
+      - name: Validate PR body, assignee, reviewer, labels, branch, commits, and linked issues
         uses: actions/github-script@v7
+        env:
+          COURSE_PROJECT_OWNER: ${{ vars.COURSE_PROJECT_OWNER }}
+          COURSE_PROJECT_NUMBER: ${{ vars.COURSE_PROJECT_NUMBER }}
+          COURSE_PROJECT_TOKEN: ${{ secrets.COURSE_PROJECT_TOKEN }}
         with:
+          github-token: ${{ secrets.COURSE_PROJECT_TOKEN || github.token }}
           script: |
-            const pr = context.payload.pull_request;
+            const eventPr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const [{ data: pr }, { data: prIssue }] = await Promise.all([
+              github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: eventPr.number
+              }),
+              github.rest.issues.get({
+                owner,
+                repo,
+                issue_number: eventPr.number
+              })
+            ]);
+
+            if (pr.state !== "open") {
+              core.info(`Skipping PR validation because current PR state is: ${pr.state}.`);
+              return;
+            }
+
             const body = pr.body || "";
-            const labels = pr.labels.map(label => label.name);
-            const assignees = (pr.assignees || []).map(user => user.login).filter(Boolean);
+            const labels = (prIssue.labels || []).map(label => label.name);
+            const assignees = (prIssue.assignees || []).map(user => user.login).filter(Boolean);
             const assignedLogins = new Set(assignees.map(login => login.toLowerCase()));
             const requestedReviewers = (pr.requested_reviewers || []).map(user => user.login).filter(Boolean);
             const branchName = pr.head.ref || "";
             const errors = [];
+            const linkedIssueErrors = [];
+            const linkedIssueChecks = [];
+            const LINKED_ISSUE_REPORT_MARKER = "<!-- course-pr-linked-issue-readiness -->";
             const isOwnerMaintenancePr =
               branchName.startsWith("course-maintenance/") &&
               pr.author_association === "OWNER" &&
@@ -43,7 +71,6 @@ jobs:
             // NJIT-style UCID format: 2-4 letters followed by optional digits.
             const ucidCore = "[a-z]{2,4}\\d{0,4}";
             const commitPrefixPattern = new RegExp(`^(${ucidCore}):\\s+`, "i");
-            const linkedIssuePattern = /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#\d+/i;
             const reservedUcidWords = new Set([
               "bug",
               "chore",
@@ -75,13 +102,232 @@ jobs:
               return matches;
             }
 
-            const linkedIssueMatch = body.match(linkedIssuePattern);
+            function extractClosingIssueReferences(value) {
+              const references = new Set();
+              const currentRepo = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              // Intentionally supports comma shorthand like "Closes #1, #2" for automation recovery.
+              const closingReferenceGroupPattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+((?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b(?:\s*,\s*(?:(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)\d+\b)*)/gi;
+              const referencePattern = /(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)(\d+)\b/g;
+
+              for (const groupMatch of String(value || "").matchAll(closingReferenceGroupPattern)) {
+                for (const match of groupMatch[1].matchAll(referencePattern)) {
+                  const repo = match[1] ? match[1].toLowerCase() : currentRepo;
+                  if (repo === currentRepo) {
+                    references.add(Number(match[2]));
+                  }
+                }
+              }
+
+              return [...references].sort((left, right) => left - right);
+            }
+
+            function addLinkedIssueCheck(status, number, detail) {
+              const statusLabel = status === "pass"
+                ? ":green_circle: PASS"
+                : status === "warn"
+                  ? ":yellow_circle: WARN"
+                  : ":red_circle: FAIL";
+              linkedIssueChecks.push({ status, number, detail, statusLabel });
+              core.info(`${statusLabel} #${number}: ${detail}`);
+              if (status === "fail") {
+                linkedIssueErrors.push(`#${number}: ${detail}`);
+              }
+            }
+
+            function formatLinkedIssueChecks() {
+              if (linkedIssueChecks.length === 0) {
+                return "- :yellow_circle: WARN No same-repo linked issues were available to validate.";
+              }
+
+              return linkedIssueChecks
+                .map(check => `- ${check.statusLabel} #${check.number}: ${check.detail}`)
+                .join("\n");
+            }
+
+            function buildLinkedIssueReport() {
+              return [
+                LINKED_ISSUE_REPORT_MARKER,
+                "Linked issue closure readiness",
+                "",
+                formatLinkedIssueChecks(),
+                "",
+                linkedIssueErrors.length > 0
+                  ? "This PR is blocked until the failed linked issue checks are fixed."
+                  : "All linked issue closure checks passed or produced warnings only."
+              ].join("\n");
+            }
+
+            async function createLinkedIssueReport() {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: buildLinkedIssueReport()
+              });
+            }
+
+            function validateIssueReadiness(issue, project) {
+              const result = { errors: [], warnings: [] };
+
+              if (!issue?.id) {
+                result.errors.push("Issue was not found in this repository.");
+                return result;
+              }
+
+              if (issue.state === "CLOSED") {
+                result.warnings.push("Issue is already closed, so this PR will not close it again.");
+                return result;
+              }
+
+              const issueAssignees = issue.assignees?.nodes?.map(user => user.login).filter(Boolean) || [];
+              if (issueAssignees.length === 0) {
+                result.errors.push("Issue must have at least one assignee.");
+              }
+
+              const issueLabels = issue.labels?.nodes?.map(label => label.name).filter(Boolean) || [];
+              if (issueLabels.length === 0) {
+                result.errors.push("Issue must have at least one label.");
+              }
+
+              if (!issueLabels.some(label => String(label).toLowerCase().startsWith("type:"))) {
+                result.errors.push("Issue must have at least one `type:*` label.");
+              }
+
+              if (!project.configured) {
+                result.errors.push("Project check is not configured.");
+              } else if (!project.id) {
+                result.errors.push(`Configured project ${project.owner} #${project.number} could not be found.`);
+              } else {
+                const projectItems = issue.projectItems?.nodes || [];
+                const inProject = projectItems.some(item => item.project?.id === project.id);
+                if (!inProject) {
+                  result.errors.push(`Issue must be attached to project board: ${project.title}.`);
+                }
+              }
+
+              const subIssues = issue.subIssues?.nodes || [];
+              const openSubIssues = subIssues.filter(subIssue => subIssue.state !== "CLOSED");
+              if (openSubIssues.length > 0) {
+                result.warnings.push(`Direct sub-issues still open: ${openSubIssues.map(subIssue => `#${subIssue.number}`).join(", ")}.`);
+              }
+
+              return result;
+            }
+
+            async function loadProject() {
+              const projectOwner = process.env.COURSE_PROJECT_OWNER;
+              const projectNumberRaw = process.env.COURSE_PROJECT_NUMBER;
+              const configured = Boolean(projectOwner && projectNumberRaw);
+
+              if (!configured) {
+                return { configured: false, owner: projectOwner || "", number: projectNumberRaw || "", id: "", title: "" };
+              }
+
+              const projectNumber = Number(projectNumberRaw);
+              const projectQuery = `
+                query($owner: String!, $number: Int!) {
+                  repositoryOwner(login: $owner) {
+                    ... on User {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                    ... on Organization {
+                      projectV2(number: $number) {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+              `;
+              const projectResult = await github.graphql(projectQuery, {
+                owner: projectOwner,
+                number: projectNumber
+              });
+              const project = projectResult.repositoryOwner?.projectV2;
+
+              return {
+                configured: true,
+                owner: projectOwner,
+                number: projectNumber,
+                id: project?.id || "",
+                title: project?.title || ""
+              };
+            }
+
+            async function validateLinkedIssues(issueNumbers) {
+              if (issueNumbers.length === 0) {
+                return;
+              }
+
+              const project = await loadProject();
+              const issueQuery = `
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      id
+                      number
+                      title
+                      state
+                      url
+                      assignees(first: 100) {
+                        nodes { login }
+                      }
+                      labels(first: 100) {
+                        nodes { name }
+                      }
+                      projectItems(first: 100) {
+                        nodes {
+                          project { id title }
+                        }
+                      }
+                      subIssues(first: 50) {
+                        nodes {
+                          number
+                          state
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              for (const number of issueNumbers) {
+                try {
+                  const issueResult = await github.graphql(issueQuery, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    number
+                  });
+                  const issue = issueResult.repository?.issue;
+                  const readiness = validateIssueReadiness(issue, project);
+
+                  if (readiness.errors.length > 0) {
+                    addLinkedIssueCheck("fail", number, readiness.errors.join("; "));
+                    continue;
+                  }
+
+                  if (readiness.warnings.length > 0) {
+                    addLinkedIssueCheck("warn", number, readiness.warnings.join("; "));
+                    continue;
+                  }
+
+                  addLinkedIssueCheck("pass", number, "Ready to close when this PR merges.");
+                } catch (error) {
+                  addLinkedIssueCheck("fail", number, error.message);
+                }
+              }
+            }
+
+            const issueNumbers = extractClosingIssueReferences(body);
 
             core.info("Raw PR body:");
             core.info(JSON.stringify(body));
-            core.info(`Linked issue match: ${linkedIssueMatch ? linkedIssueMatch[0] : "none"}`);
+            core.info(`Linked issue numbers: ${issueNumbers.length > 0 ? issueNumbers.map(number => `#${number}`).join(", ") : "none"}`);
 
-            if (!linkedIssueMatch) {
+            if (issueNumbers.length === 0) {
               errors.push("PR body must link an issue using a closing keyword, such as `Closes #12`.");
             }
 
@@ -98,7 +344,6 @@ jobs:
               errors.push(`Branch name must include a UCID, such as \`issue-12-mt85-login-form\`. Current branch: \`${branchName}\`.`);
             }
 
-            const { owner, repo } = context.repo;
             const commits = await github.paginate(github.rest.pulls.listCommits, {
               owner,
               repo,
@@ -158,6 +403,19 @@ jobs:
               errors.push(
                 "At least one commit message must start with a UCID prefix, such as `mt85: add login form`." +
                 "\n\nCurrent commit examples:\n" + examples
+              );
+            }
+
+            await validateLinkedIssues(issueNumbers);
+
+            if (issueNumbers.length > 0) {
+              await createLinkedIssueReport();
+            }
+
+            if (linkedIssueErrors.length > 0) {
+              errors.push(
+                "Linked issue closure readiness failed:\n" +
+                linkedIssueErrors.map(error => `- ${error}`).join("\n")
               );
             }
 
