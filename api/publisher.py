@@ -6,14 +6,7 @@
 import pika
 import json
 from datetime import datetime
-
-# RabbitMQ connection settings
-RABBITMQ_HOST = '100.122.133.62'
-RABBITMQ_PORT = 5672
-RABBITMQ_USER = 'teamuser'
-RABBITMQ_PASS = 'password123'
-LOG_EXCHANGE = 'log_exchange'
-LOG_ROUTING_KEY = 'log'
+from config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, LOG_EXCHANGE, LOG_ROUTING_KEY
 
 def get_connection():
     return pika.BlockingConnection(
