@@ -73,6 +73,19 @@ else
   echo "$PASS no scripts shipping logs via scp/rsync/curl"
 fi
 
+# ucid: omg6 - Check 6: RabbitMQ topology + DLQ (only meaningful on rabbitmq-vm)
+echo ""
+echo "6) RabbitMQ topology / DLQ (run on rabbitmq-vm) ------------------"
+if command -v rabbitmqctl >/dev/null 2>&1; then
+  echo "$INFO queues (look for log_queue AND a dead-letter/error queue):"
+  sudo rabbitmqctl list_queues name messages 2>/dev/null || echo "   (need sudo / broker running)"
+  echo "$INFO bindings (expect: log_exchange --log--> log_queue):"
+  sudo rabbitmqctl list_bindings 2>/dev/null | grep -Ei 'log_exchange|log_queue' || echo "   (no matching bindings found)"
+  echo "$INFO re-run after publisher.py and confirm the DLQ count increases by 1"
+else
+  echo "$INFO rabbitmqctl not on this host - run Check 6 on rabbitmq-vm"
+fi
+
 echo ""
 echo "==================================================================="
 if [ "$overall" -eq 0 ]; then
@@ -85,11 +98,12 @@ echo "==================================================================="
 # ucid: omg6 - Positive test must be run by a human across two VMs + the broker.
 echo ""
 echo 'NEXT: positive "MQ-is-the-only-path" test (manual, needs broker + 2 VMs)  ucid: omg6'
-echo '  1. Listener VM : tail -f <mirrored-log-file>'
-echo '  2. Publisher VM: emit one test log event (the #6 logging interface)'
-echo '                   -> confirm it appears in the listener log (timestamp/content)'
-echo '  3. rabbitmq-vm : sudo systemctl stop rabbitmq-server'
-echo '     Publisher VM: emit another event -> confirm it does NOT appear (sync stopped)'
-echo '  4. rabbitmq-vm : sudo systemctl start rabbitmq-server'
-echo '     Publisher VM: emit again -> confirm it appears (sync resumes)'
+echo '  1. api-vm     : python3 consumer.py   AND   tail -f /home/em567/api_vm.log'
+echo '  2. publisher  : python3 publisher.py  (sends 3 valid + 1 malformed)'
+echo '                  -> 3 valid lines append to api_vm.log (note timestamps)'
+echo '                  -> malformed message should land in the DLQ (Check 6)'
+echo '  3. rabbitmq-vm: sudo systemctl stop rabbitmq-server'
+echo '     publisher  : python3 publisher.py  -> NOTHING appends (sync stopped)'
+echo '  4. rabbitmq-vm: sudo systemctl start rabbitmq-server'
+echo '     publisher  : python3 publisher.py  -> appends resume'
 echo '  Capture all output as evidence for issue #16.    ucid: omg6'
