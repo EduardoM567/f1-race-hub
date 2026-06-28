@@ -6,11 +6,11 @@
 import pika
 import json
 import logging
-from datetime import datetime
+from config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, LOG_FILE
 
 # Configure local log file
 logging.basicConfig(
-    filename='/home/em567/api_vm.log',
+    filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s - %(message)s'
 )
@@ -36,9 +36,9 @@ def process_message(ch, method, properties, body):
 def main():
     connection = pika.BlockingConnection(
         pika.ConnectionParameters(
-            host='100.122.133.62',
-            port=5672,
-            credentials=pika.PlainCredentials('teamuser', 'password123')
+            host=RABBITMQ_HOST,
+            port=RABBITMQ_PORT,
+            credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
         )
     )
 
