@@ -1,5 +1,5 @@
 #!/bin/bash
-# Owner: Ruchir Patel (rkp28)
+# Owner: Ruchir Patel rkp28
 
 sudo apt-get update -y
 
