@@ -1,5 +1,5 @@
 #!/bin/bash
-#rkp28 app script
+# Owner: Ruchir Patel (rkp28)
 
 sudo apt-get update -y
 
