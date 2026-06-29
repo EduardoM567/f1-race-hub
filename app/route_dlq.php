@@ -6,7 +6,6 @@ use PhpAmqpLib\Message\AMQPMessage;
 #sends bad messages to DLQ queue
 function route_to_dlq(array $data):void{
     try{
-
         #opens connection to rabbitmq and makes channel
         $conn= get_mq_connection();
         $ch= $conn->channel();
