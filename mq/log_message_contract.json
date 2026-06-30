@@ -1,0 +1,24 @@
+{
+  "exchange": {
+    "name": "log_exchange",
+    "type": "direct"
+  },
+  "queues": {
+    "main_queue": {
+      "name": "log_queue",
+      "routing_key": "log.event",
+      "dead_letter_exchange": "log_dlx"
+    },
+    "dead_letter_queue": {
+      "name": "log_dlq",
+      "exchange": "log_dlx",
+      "routing_key": "log.dead"
+    }
+  },
+  "message_fields": {
+    "source": "string - identifies the VM/server sending the log",
+    "timestamp": "string - ISO 8601 format",
+    "level: "string - INFO, WARNING, ERROR",
+    "message": "string - the log content"
+  }
+}
