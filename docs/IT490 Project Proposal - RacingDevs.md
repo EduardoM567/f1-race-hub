@@ -1,5 +1,4 @@
 # IT490 Project Proposal Template
-
 Use this template to define the project before implementation. The proposal should focus on what the team wants to build, what users can do, what data the system may need, and what should be realistic for the MVP and final demo.  
 Do not delete prompt text, examples, or headings. Add your team content only inside the annotated response blocks.
 
