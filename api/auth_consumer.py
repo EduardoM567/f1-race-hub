@@ -12,13 +12,44 @@ from auth_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PA
 # password hashing and database read/write logic. They must return a dict
 # with at least {'success': bool, 'message': str}.
 
+mycursor = mydb.cursor()
 def handle_register(email, password):
     # TODO (Branden): hash password, insert user record, handle duplicate email
-    return {'success': False, 'message': 'Registration handler not implemented yet'}
+    #hash password
+    def hash_password(password: str) -> bytes:
+    bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(bytes, salt)
+    return hashed
+    #insert user record
+    mycursor = mydb.cursor()
+    def insert_user(user, password):
+        try:
+            sql = "INSERT INTO users (email, password) VALUES (%s, %s)"
+            val = (email, hashed)
+            mycursor.execute(sql, val)
+            mydb.commit()
+            return {'success': True, 'message': 'User registered successfully'}
+        except:
+            #handle duplicte email
+            return {'success': False, 'message': 'Email already in use'}
+    return {'success': False, 'message': 'Enter different email or password'}
 
 def handle_login(email, password):
     # TODO (Branden): look up user, verify password hash, return generic error on failure
-    return {'success': False, 'message': 'Login handler not implemented yet'}
+    #look up user
+    try:
+        mycursor = mydb.cursor()
+        sql = mycursor.execute("SELECT * FROM users WHERE email = %s LIMIT 1")
+        mycursor.execute(sql)
+        row = mycursor.fetchone()
+    except:
+        return{'success': False, 'message': 'Invalid email'}
+        #verify password hash
+        def verify_password(password:str, hash: bytes) -> bool:
+            if bcrypt.checkpw(password.encode('utf-8'),hash):
+                return{'success': True, 'message': 'password accepted'}
+    return {'success': False, 'message': 'Invalid email or password'}
 
 
 def make_callback(handler_fn, expected_type):
