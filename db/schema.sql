@@ -1,9 +1,6 @@
-CREATE DATABASE users_registration;
-
-use users_registration;
-
-CREATE TABLE users(
-    user_id INT PRIMARY KEY AUTO-AUTO_INCREMENT,
-    email Varchar(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(60) NOT NULL,
+CREATE TABLE IF NOT EXISTS users (
+    user_id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(60) NOT NULL
 );
