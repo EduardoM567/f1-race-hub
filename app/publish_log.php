@@ -19,7 +19,7 @@ function publish_log(string $type, string $message):void{
     #makes the json message
     $payload = json_encode([
         'source' => gethostname(),
-        'timestamp' => date('Y-m-d\TH:i:s'),
+        'timestamp' => date('Y-m-d H:i:s'),
         'level' => strtoupper($type),
         'message' => $message
     ]);

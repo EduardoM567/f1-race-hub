@@ -5,3 +5,7 @@ if (!isset($_SESSION['user_login'])) {
     exit;
 }
 echo "you are logged, here is account content";
+?>
+<html>
+<a href="logout.php">Log out</a>
+</html>
