@@ -1,4 +1,3 @@
-<<'PY'
 # F1 RabbitMQ Configuration
 # Owner: Michelle Gonzalez (mg792)
 
@@ -16,4 +15,4 @@ F1_DLQ = 'f1_dlq'
 
 F1_REQUEST_ROUTING_KEY = 'f1.request'
 F1_REPLY_ROUTING_KEY = 'f1.reply'
-PY
+
