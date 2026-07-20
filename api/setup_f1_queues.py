@@ -1,4 +1,3 @@
-<<'PY'
 #!/usr/bin/env python3
 # F1 Queue Topology Setup
 # Owner: Michelle Gonzalez (mg792)
@@ -98,4 +97,3 @@ def setup_queues():
 
 if __name__ == '__main__':
     setup_queues()
-PY

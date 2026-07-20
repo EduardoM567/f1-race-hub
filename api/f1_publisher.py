@@ -5,6 +5,7 @@
 
 import json
 import uuid
+import time
 
 import pika
 
@@ -76,7 +77,10 @@ class F1Client:
             body=json.dumps(message),
         )
 
-        self.connection.process_data_events(time_limit=timeout)
+        deadline = time.monotonic() + timeout
+
+        while self.response is None and time.monotonic() < deadline:
+            self.connection.process_data_events(time_limit=0.25)
 
         if self.response is None:
             return {
