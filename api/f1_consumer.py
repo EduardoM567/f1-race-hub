@@ -6,7 +6,7 @@
 import pika
 import json
 import requests
-from f1_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, F1_EXCHANGE, F1_REQUEST_QUEUE, F1_DLQ, OPENF1_BASE_URL
+from f1_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, F1_EXCHANGE, F1_REQUEST_QUEUE, OPENF1_BASE_URL
 
 def fetch_schedule():
     try:
@@ -18,21 +18,70 @@ def fetch_schedule():
 
 def fetch_standings():
     try:
-        response = requests.get(f"{OPENF1_BASE_URL}/drivers?session_key=latest")
-        response.raise_for_status()
-        return response.json()
+        standings_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=latest")
+        standings_response.raise_for_status()
+        standings = standings_response.json()
+
+        drivers_response = requests.get(f"{OPENF1_BASE_URL}/drivers?session_key=latest")
+        drivers_response.raise_for_status()
+        drivers = drivers_response.json()
+
+        driver_map = {d['driver_number']: d for d in drivers}
+
+        combined = []
+        for standing in standings:
+            driver_number = standing['driver_number']
+            driver_info = driver_map.get(driver_number, {})
+            combined.append({
+                'position': standing.get('position_current'),
+                'driver_number': driver_number,
+                'full_name': driver_info.get('full_name', 'Unknown'),
+                'team_name': driver_info.get('team_name', 'Unknown'),
+                'points': standing.get('points_current'),
+                'headshot_url': driver_info.get('headshot_url', '')
+            })
+
+        combined.sort(key=lambda x: x['position'] or 99)
+        return combined
+
     except Exception as e:
         raise Exception(f"Failed to fetch standings: {e}")
 
 def fetch_driver(driver_number):
     try:
-        response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=latest")
-        response.raise_for_status()
-        return response.json()
+        driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=latest")
+        driver_response.raise_for_status()
+        driver_data = driver_response.json()
+
+        if not driver_data:
+            raise Exception(f"Driver {driver_number} not found")
+
+        driver = driver_data[0]
+
+        standing_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=latest&driver_number={driver_number}")
+        standing_response.raise_for_status()
+        standing_data = standing_response.json()
+
+        standing = standing_data[0] if standing_data else {}
+
+        return {
+            'driver_number': driver_number,
+            'full_name': driver.get('full_name', 'Unknown'),
+            'first_name': driver.get('first_name', ''),
+            'last_name': driver.get('last_name', ''),
+            'team_name': driver.get('team_name', 'Unknown'),
+            'team_colour': driver.get('team_colour', ''),
+            'headshot_url': driver.get('headshot_url', ''),
+            'name_acronym': driver.get('name_acronym', ''),
+            'points': standing.get('points_current', 0),
+            'position': standing.get('position_current', 0)
+        }
+
     except Exception as e:
         raise Exception(f"Failed to fetch driver: {e}")
 
 def process_request(ch, method, properties, body):
+    message = {}
     try:
         message = json.loads(body)
 
@@ -84,15 +133,14 @@ def process_request(ch, method, properties, body):
             'message': str(e)
         }
 
-        if properties.reply_to:
-            ch.basic_publish(
-                exchange=F1_EXCHANGE,
-                routing_key='f1.reply',
-                properties=pika.BasicProperties(
-                    correlation_id=message.get('correlation_id', '')
-                ),
-                body=json.dumps(error_result)
-            )
+        ch.basic_publish(
+            exchange=F1_EXCHANGE,
+            routing_key='f1.reply',
+            properties=pika.BasicProperties(
+                correlation_id=message.get('correlation_id', '')
+            ),
+            body=json.dumps(error_result)
+        )
 
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
