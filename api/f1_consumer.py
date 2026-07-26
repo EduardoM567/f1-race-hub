@@ -6,6 +6,7 @@
 import pika
 import json
 import requests
+from datetime import datetime
 from f1_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, F1_EXCHANGE, F1_REQUEST_QUEUE, OPENF1_BASE_URL
 
 def fetch_schedule():
@@ -18,11 +19,11 @@ def fetch_schedule():
 
 def fetch_standings():
     try:
-        standings_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=latest")
+        standings_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=9839")
         standings_response.raise_for_status()
         standings = standings_response.json()
 
-        drivers_response = requests.get(f"{OPENF1_BASE_URL}/drivers?session_key=latest")
+        drivers_response = requests.get(f"{OPENF1_BASE_URL}/drivers?session_key=9839")
         drivers_response.raise_for_status()
         drivers = drivers_response.json()
 
@@ -49,16 +50,21 @@ def fetch_standings():
 
 def fetch_driver(driver_number):
     try:
-        driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=latest")
+        driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=9839")
         driver_response.raise_for_status()
         driver_data = driver_response.json()
+
+        if not driver_data:
+            driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=9158")
+            driver_response.raise_for_status()
+            driver_data = driver_response.json()
 
         if not driver_data:
             raise Exception(f"Driver {driver_number} not found")
 
         driver = driver_data[0]
 
-        standing_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=latest&driver_number={driver_number}")
+        standing_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=9839&driver_number={driver_number}")
         standing_response.raise_for_status()
         standing_data = standing_response.json()
 
