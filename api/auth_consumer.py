@@ -16,12 +16,12 @@ from auth_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PA
 
 print("Imports done...", flush=True)
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 print("Env loaded...", flush=True)
 
 mydb = mysql.connector.connect(
-     host=os.getenv('DB_HOST'),
+    host=os.getenv('DB_HOST'),
     port=int(os.getenv('DB_PORT')),
     database=os.getenv('DB_NAME'),
     user=os.getenv('DB_USER'),
@@ -36,16 +36,16 @@ def hash_password(password: str):
     salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(encoded, salt).decode('utf-8')
 
-def handle_register(email, password):
-    if not email or not password:
-        return {'success': False, 'message': 'Email and password are required'}
+def handle_register(username, email, password):
+    if not username or not email or not password:
+        return {'success': False, 'message': 'Username, email and password are required'}
 
     hashed = hash_password(password)
     cursor = None
     try:
         cursor = mydb.cursor()
-        sql = "INSERT INTO users (email, password) VALUES (%s, %s)"
-        val = (email, hashed)
+        sql = "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)"
+        val = (username, email, hashed)
         cursor.execute(sql, val)
         mydb.commit()
         return {'success': True, 'message': 'User registered successfully'}
@@ -66,11 +66,11 @@ def handle_login(email, password):
     cursor = None
     try:
         cursor = mydb.cursor()
-        sql = "SELECT email, password FROM users WHERE email = %s LIMIT 1"
+        sql = 'SELECT user_id, username, email, password FROM users WHERE email = %s LIMIT 1'
         cursor.execute(sql, (email,))
         row = cursor.fetchone()
     except Exception:
-         return {'success': False, 'message': 'Invalid email or password'}
+        return {'success': False, 'message': 'Invalid email or password'}
     finally:
         if cursor:
             cursor.close()
@@ -78,24 +78,26 @@ def handle_login(email, password):
     if row is None:
         return {'success': False, 'message': 'Invalid email or password'}
 
-    stored_hashed = row[1]
+    stored_hashed = row[3]
     if bcrypt.checkpw(password.encode('utf-8'), stored_hashed.encode('utf-8')):
-         return {'success': False, 'message': 'Invalid email or password'}
+        return {'success': True, 'message': 'Login successful', 'username': row[1], 'user_id': row[0]}
+    else:
+        return {'success': False, 'message': 'Invalid email or password'}
 
-def make_callback(handler_fn, expected_type):
+def make_register_callback(handler_fn):
     def callback(ch, method, properties, body):
         try:
             message = json.loads(body)
 
-            required = ['type', 'email', 'password', 'correlation_id']
+            required = ['type', 'username', 'email', 'password', 'correlation_id']
             if not all(k in message for k in required):
-                raise ValueError("Malformed auth message - missing required fields")
-            
-            if message['type'] != expected_type:
+                raise ValueError("Malformed register message - missing required fields")
+
+            if message['type'] != 'register':
                 raise ValueError(f"Unexpected message type: {message['type']}")
 
-            result = handler_fn(message['email'], message['password'])
-            print(f"Processed {expected_type} request for {message['email']}: {result}", flush=True)
+            result = handler_fn(message['username'], message['email'], message['password'])
+            print(f"Processed register request for {message['email']}: {result}", flush=True)
 
             result['correlation_id'] = message['correlation_id']
 
@@ -111,7 +113,41 @@ def make_callback(handler_fn, expected_type):
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
-            print(f"Error processing {expected_type} request: {e}", flush=True)
+            print(f"Error processing register request: {e}", flush=True)
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    return callback
+
+def make_login_callback(handler_fn):
+    def callback(ch, method, properties, body):
+        try:
+            message = json.loads(body)
+
+            required = ['type', 'email', 'password', 'correlation_id']
+            if not all(k in message for k in required):
+                raise ValueError("Malformed login message - missing required fields")
+
+            if message['type'] != 'login':
+                raise ValueError(f"Unexpected message type: {message['type']}")
+
+            result = handler_fn(message['email'], message['password'])
+            print(f"Processed login request for {message['email']}: {result}", flush=True)
+
+            result['correlation_id'] = message['correlation_id']
+
+            ch.basic_publish(
+                exchange=AUTH_EXCHANGE,
+                routing_key='auth.reply',
+                properties=pika.BasicProperties(
+                    correlation_id=message['correlation_id']
+                ),
+                body=json.dumps(result)
+            )
+
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+
+        except Exception as e:
+            print(f"Error processing login request: {e}", flush=True)
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     return callback
@@ -131,11 +167,11 @@ def main():
 
     channel.basic_consume(
         queue=AUTH_REGISTER_QUEUE,
-        on_message_callback=make_callback(handle_register, 'register')
+        on_message_callback=make_register_callback(handle_register)
     )
     channel.basic_consume(
         queue=AUTH_LOGIN_QUEUE,
-        on_message_callback=make_callback(handle_login, 'login')
+        on_message_callback=make_login_callback(handle_login)
     )
 
     print("DB VM Auth Consumer waiting for registration and login requests...", flush=True)
