@@ -3,6 +3,8 @@
 <body>
 <h1>Racing Dev</h1>
 <form action="register.php" method="POST">
+    <label for="username"><b>Username</label><b>
+    <input type="text" id="username" name="username" minlength="4"><br><br>
     <label for="email">Email:</label>
     <input type="email" id="email" name="email"><br><br>
     <label for="pwd">Password:</label>
@@ -16,22 +18,19 @@
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
 
-if (isset($_POST['email']) && isset($_POST['password'])){
+if (!empty($_POST['email']) && !empty($_POST['password']) && !empty($_POST['username'])){
     $email = htmlspecialchars($_POST['email']);
     $password = ($_POST['password']);
-
-    if (isset($password)) {
-        echo "password variable is valid";
-    }
+    $username = htmlspecialchars($_POST['username']);
 
     $email = filter_var($email, FILTER_SANITIZE_EMAIL);
 
     if (filter_var($email, FILTER_VALIDATE_EMAIL)){
-        echo("$email is a valid email address");
 
         $corrId = uniqid();
         $payload = json_encode([
             'type' => 'register',
+            'username' => $username,
             'email' => $email,
             'password' => $password,
             'correlation_id' => $corrId,
