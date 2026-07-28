@@ -1,0 +1,22 @@
+{
+  "api": {
+    "dev": {
+      "host": "api-dev",
+      "user": "em567",
+      "app_path": "/home/em567/",
+      "backup_path": "/home/em567/backups/"
+    },
+    "qa": {
+      "host": "api-qa",
+      "user": "em567",
+      "app_path": "/home/em567/",
+      "backup_path": "/home/em567/backups/"
+    },
+    "prod": {
+      "host": "api-prod",
+      "user": "em567",
+      "app_path": "/home/em567/",
+      "backup_path": "/home/em567/backups/"
+    }
+  }
+}
