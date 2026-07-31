@@ -1,0 +1,10 @@
+{
+  "release_id": "REL-API-BULK-001",
+  "role": "api",
+  "files": [
+    "f1_consumer.py",
+    "f1_config.py",
+    "auth_consumer.py",
+    "auth_config.py"
+  ]
+}
