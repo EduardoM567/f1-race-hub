@@ -5,6 +5,7 @@
 # Enforces: dev->QA and QA->prod only, blocks dev->prod directly.
 # Creates a backup on the target before promoting.
 # Logs source lane, target lane, target file(s), release ID, backup path, result, timestamp.
+# Supports single-file promotion and bulk release promotion via a release manifest.
 
 import json
 import subprocess
@@ -87,16 +88,47 @@ def promote_file(inventory, source_lane, target_lane, filename, release_id):
     print(f"[{entry['result'].upper()}] {filename}: {source_lane} -> {target_lane} (release {release_id})")
     return entry
 
+def promote_bulk(inventory, source_lane, target_lane, manifest_path):
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    release_id = manifest['release_id']
+    files = manifest['files']
+
+    results = []
+    for filename in files:
+        entry = promote_file(inventory, source_lane, target_lane, filename, release_id)
+        results.append(entry)
+
+    print(f"\n[BULK COMPLETE] release {release_id}: {len(results)} files promoted {source_lane} -> {target_lane}")
+    return results
+
 def main():
     if len(sys.argv) < 4:
-        print("Usage: python3 promote.py <source_lane> <target_lane> <filename> [release_id]")
-        print("Example: python3 promote.py dev qa f1_consumer.py")
+        print("Usage:")
+        print("  Single file:  python3 promote.py <source_lane> <target_lane> <filename> [release_id]")
+        print("  Bulk release: python3 promote.py <source_lane> <target_lane> --manifest <manifest_path>")
         sys.exit(1)
 
     inventory = load_inventory()
-
     source_lane = sys.argv[1]
     target_lane = sys.argv[2]
+
+    if sys.argv[3] == '--manifest':
+        if len(sys.argv) < 5:
+            print("Missing manifest path")
+            sys.exit(1)
+        manifest_path = sys.argv[4]
+        try:
+            promote_bulk(inventory, source_lane, target_lane, manifest_path)
+        except ValueError as e:
+            print(f"[REJECTED] {e}")
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"[ERROR] {e}")
+            sys.exit(1)
+        return
+
     filename = sys.argv[3]
     release_id = sys.argv[4] if len(sys.argv) > 4 else datetime.utcnow().strftime('%Y%m%d-%H%M%S')
 
