@@ -1,20 +1,11 @@
-#!/usr/bin/env python3
-# API VM Promotion Tool
-# Owner: Eduardo (em567)
-# Promotes API files from development -> QA -> production via SSH.
-# Enforces: dev->QA and QA->prod only, blocks dev->prod directly.
-# Creates a backup on the target before promoting.
-# Logs source lane, target lane, target file(s), release ID, backup path, result, timestamp.
-# Supports single-file promotion and bulk release promotion via a release manifest.
-
 import json
 import subprocess
 import sys
 import os
 from datetime import datetime
 
-INVENTORY_FILE = os.path.join(os.path.dirname(__file__), 'inventory.json')
-LOG_FILE = os.path.join(os.path.dirname(__file__), 'promotion.log')
+INVENTORY_FILE = os.path.join(os.path.dirname(__file__), 'app-inventory.json')
+LOG_FILE = os.path.join(os.path.dirname(__file__), 'app-promotion.log')
 
 VALID_PATHS = {
     ('dev', 'qa'),
@@ -23,7 +14,7 @@ VALID_PATHS = {
 
 def load_inventory():
     with open(INVENTORY_FILE) as f:
-        return json.load(f)['api']
+        return json.load(f)['app']
 
 def log_event(entry):
     with open(LOG_FILE, 'a') as f:
@@ -74,7 +65,7 @@ def promote_file(inventory, source_lane, target_lane, filename, release_id):
         'release_id': release_id,
         'source_lane': source_lane,
         'target_lane': target_lane,
-        'target_role': 'api',
+        'target_role': 'app',
         'file': filename,
         'backup_path': backup_path,
         'checksum': checksum,
@@ -140,7 +131,7 @@ def main():
             'release_id': release_id,
             'source_lane': source_lane,
             'target_lane': target_lane,
-            'target_role': 'api',
+            'target_role': 'app',
             'file': filename,
             'backup_path': None,
             'checksum': None,
