@@ -1,0 +1,53 @@
+development:
+  app:
+    host: 100.106.163.110
+    user: rkp28
+    path: /home/rkp28/it490-m2026-racingdevs/app
+  db:
+    host: 10.0.2.15
+    user: bb449
+    path: /home/bb449/db/migrations
+  mq:
+    host: 10.0.2.15
+    user: mg792
+    path: /etc/rabbitmq
+  api:
+    host: 100.108.91.113
+    user: em567
+    path: /home/em567/it490-m2026-racingdevs
+
+qa:
+  app:
+    host: TBD
+    user: TBD
+    path: TBD
+  db:
+    host: 10.0.2.15
+    user: bb449
+    path: /home/bb449/db/migrations
+  mq:
+    host: TBD
+    user: mg792
+    path: /etc/rabbitmq
+  api:
+    host: TBD
+    user: em567
+    path: TBD
+
+production:
+  app:
+    host: TBD
+    user: TBD
+    path: TBD
+  db:
+    host: TBD
+    user: bb449
+    path: /home/bb449/db/migrations
+  mq:
+    host: TBD
+    user: mg792
+    path: /etc/rabbitmq
+  api:
+    host: TBD
+    user: em567
+    path: TBD
