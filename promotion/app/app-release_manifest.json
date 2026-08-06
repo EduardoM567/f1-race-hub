@@ -1,0 +1,10 @@
+{
+  "release_id": "REL-APP-BULK-001",
+  "role": "app",
+  "files": [
+  "logout.php",
+  "register.php",
+  "login.php"
+]
+}
+

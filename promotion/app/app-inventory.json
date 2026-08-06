@@ -1,0 +1,22 @@
+{
+  "app": {
+    "dev": {
+      "host": "app-dev",
+      "user": "rkp28",
+      "app_path": "/home/rkp28/it490-m2026-racingdevs/app/",
+      "backup_path": "/home/rkp28/it490-m2026-racingdevs/app/backups/"
+    },
+    "qa": {
+      "host": "app-qa",
+      "user": "rkp28",
+      "app_path": "/home/rkp28/it490-m2026-racingdevs/app/",
+      "backup_path": "/home/rkp28/it490-m2026-racingdevs/app/backups/"
+    },
+    "prod": {
+      "host": "app-prod",
+      "user": "rkp28",
+      "app_path": "/home/rkp28/it490-m2026-racingdevs/app/",
+      "backup_path": "/home/rkp28/it490-m2026-racingdevs/app/backups/"
+    }
+  }
+}
