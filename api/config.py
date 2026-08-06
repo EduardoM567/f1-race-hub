@@ -1,6 +1,6 @@
 # RabbitMQ Configuration
 # Owner: Eduardo (em567)
-RABBITMQ_HOST = '100.122.133.62'
+RABBITMQ_HOST = '100.109.235.21'
 RABBITMQ_PORT = 5672
 RABBITMQ_USER = 'teamuser'
 RABBITMQ_PASS = 'password123'

@@ -8,6 +8,7 @@ import json
 import requests
 from datetime import datetime
 from f1_config import RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, F1_EXCHANGE, F1_REQUEST_QUEUE, OPENF1_BASE_URL
+from publisher import publish_log
 
 def fetch_schedule():
     try:
@@ -86,6 +87,57 @@ def fetch_driver(driver_number):
     except Exception as e:
         raise Exception(f"Failed to fetch driver: {e}")
 
+def fetch_race_results(session_key):
+    try:
+        response = requests.get(f"{OPENF1_BASE_URL}/session_result?session_key={session_key}")
+        response.raise_for_status()
+        results = response.json()
+
+        drivers_response = requests.get(f"{OPENF1_BASE_URL}/drivers?session_key={session_key}")
+        drivers_response.raise_for_status()
+        drivers = drivers_response.json()
+        driver_map = {d['driver_number']: d for d in drivers}
+
+        combined = []
+        for result in results:
+            driver_number = result['driver_number']
+            driver_info = driver_map.get(driver_number, {})
+            combined.append({
+                'position': result.get('position'),
+                'driver_number': driver_number,
+                'full_name': driver_info.get('full_name', 'Unknown'),
+                'team_name': driver_info.get('team_name', 'Unknown'),
+                'headshot_url': driver_info.get('headshot_url', ''),
+                'points': result.get('points', 0)
+            })
+
+        combined.sort(key=lambda x: x['position'] or 99)
+        return combined
+
+    except Exception as e:
+        raise Exception(f"Failed to fetch race results: {e}")
+
+def fetch_news():
+    try:
+        import xml.etree.ElementTree as ET
+        response = requests.get('https://formula1.com/en/latest/all.xml', timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        articles = []
+        for item in root.findall('.//item')[:10]:
+            title = item.findtext('title', '')
+            link = item.findtext('link', '')
+            pub_date = item.findtext('pubDate', '')
+            if title and link:
+                articles.append({
+                    'title': title,
+                    'link': link,
+                    'date': pub_date
+                })
+        return articles
+    except Exception as e:
+        raise Exception(f"Failed to fetch news: {e}")
+
 def process_request(ch, method, properties, body):
     message = {}
     try:
@@ -107,6 +159,13 @@ def process_request(ch, method, properties, body):
             if not driver_number:
                 raise ValueError("driver_number required for get_driver request")
             data = fetch_driver(driver_number)
+        elif request_type == 'get_race_results':
+            session_key = params.get('session_key')
+            if not session_key:
+                raise ValueError("session_key required for get_race_results request")
+            data = fetch_race_results(session_key)
+        elif request_type == 'get_news':
+            data = fetch_news()
         else:
             raise ValueError(f"Unknown request type: {request_type}")
 
@@ -118,6 +177,12 @@ def process_request(ch, method, properties, body):
         }
 
         print(f"Processed {request_type} request successfully", flush=True)
+
+        # Centralized logging
+        try:
+            publish_log('api-vm', 'INFO', f"F1 {request_type} request processed successfully")
+        except Exception as log_err:
+            print(f"Logging failed (non-critical): {log_err}", flush=True)
 
         ch.basic_publish(
             exchange=F1_EXCHANGE,
@@ -136,8 +201,15 @@ def process_request(ch, method, properties, body):
         error_result = {
             'correlation_id': message.get('correlation_id', ''),
             'success': False,
-            'message': str(e)
+            'message': 'Unable to load data. Please try again later.',
+            'error_detail': str(e)
         }
+
+        # Log errors too
+        try:
+            publish_log('api-vm', 'ERROR', f"F1 request failed: {str(e)}")
+        except Exception as log_err:
+            print(f"Logging failed (non-critical): {log_err}", flush=True)
 
         ch.basic_publish(
             exchange=F1_EXCHANGE,
