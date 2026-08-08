@@ -51,24 +51,23 @@ def fetch_standings():
 
 def fetch_driver(driver_number):
     try:
-        driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=9839")
-        driver_response.raise_for_status()
-        driver_data = driver_response.json()
+        session_keys = [9839, 9158, 9500, 9100]
+        driver_data = []
+
+        for session_key in session_keys:
+            driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key={session_key}")
+            if driver_response.status_code == 200:
+                driver_data = driver_response.json()
+                if driver_data:
+                    break
 
         if not driver_data:
-            driver_response = requests.get(f"{OPENF1_BASE_URL}/drivers?driver_number={driver_number}&session_key=9158")
-            driver_response.raise_for_status()
-            driver_data = driver_response.json()
-
-        if not driver_data:
-            raise Exception(f"Driver {driver_number} not found")
+            raise Exception(f"Driver {driver_number} not found in any session")
 
         driver = driver_data[0]
 
         standing_response = requests.get(f"{OPENF1_BASE_URL}/championship_drivers?session_key=9839&driver_number={driver_number}")
-        standing_response.raise_for_status()
-        standing_data = standing_response.json()
-
+        standing_data = standing_response.json() if standing_response.status_code == 200 else []
         standing = standing_data[0] if standing_data else {}
 
         return {
@@ -127,12 +126,14 @@ def fetch_news():
         for item in root.findall('.//item')[:10]:
             title = item.findtext('title', '')
             link = item.findtext('link', '')
-            pub_date = item.findtext('pubDate', '')
+            description = item.findtext('description', '')
+            author = item.findtext('{https://purl.org/dc/elements/1.1/}creator', 'Formula 1').strip()
             if title and link:
                 articles.append({
                     'title': title,
                     'link': link,
-                    'date': pub_date
+                    'description': description[:150] + '...' if len(description) > 150 else description,
+                    'author': author
                 })
         return articles
     except Exception as e:
@@ -178,7 +179,6 @@ def process_request(ch, method, properties, body):
 
         print(f"Processed {request_type} request successfully", flush=True)
 
-        # Centralized logging
         try:
             publish_log('api-vm', 'INFO', f"F1 {request_type} request processed successfully")
         except Exception as log_err:
@@ -205,7 +205,6 @@ def process_request(ch, method, properties, body):
             'error_detail': str(e)
         }
 
-        # Log errors too
         try:
             publish_log('api-vm', 'ERROR', f"F1 request failed: {str(e)}")
         except Exception as log_err:
