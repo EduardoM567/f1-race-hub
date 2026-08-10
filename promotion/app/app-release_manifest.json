@@ -1,10 +1,28 @@
 {
-  "release_id": "REL-APP-BULK-001",
+  "release_id": "REL-APP-FINAL-001",
   "role": "app",
   "files": [
+  "admin_update_status.php",
+  "homepage.php",
   "logout.php",
+  "race_results.php",
+  "route_dlq.php",
+  "standings.php",
+  "admin.php",
+  "app_setup_script.sh",
+  "driver.php",
+  "log_config.php",
+  "profile.php",
   "register.php",
-  "login.php"
+  "save_fav.php",
+  "update_profile.php",
+  "admin_update_role.php",
+  "fav.php",
+  "login.php",
+  "publish_log.php",
+  "remove_fav.php",
+  "schedule.php"
 ]
 }
 
+                  

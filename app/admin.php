@@ -47,6 +47,8 @@ while(!$response && $attempts < $maxAttempts){
         if($data['correlation_id'] === $corrId){
             $response = $data;
             $ch->basic_ack($result->delivery_info['delivery_tag']);
+        } else {
+            $ch->basic_ack($result->delivery_info['delivery_tag']);
         }
     }
     $attempts++;
@@ -68,7 +70,7 @@ $conn->close();
 <h1>Admin Dashboard</h1>
 
 <?php if(isset($_SESSION['admin_message'])): ?>
-    <p><?php echo htmlspecialchars($_SESSION['admin_message']); unset($_SESSION['admin_message']); ?></p>
+    <p style="color:#00cc44; padding:10px 30px;"><?php echo htmlspecialchars($_SESSION['admin_message']); unset($_SESSION['admin_message']); ?></p>
 <?php endif; ?>
 
 <?php if($response && $response['success'] && !empty($response['data'])): ?>
@@ -85,23 +87,25 @@ $conn->close();
         <tbody>
             <?php foreach($response['data'] as $user): ?>
             <tr>
-                <td><?php echo htmlspecialchars($user['username']); ?></td>
+                <td><?php echo htmlspecialchars($user['username'] ?? 'N/A'); ?></td>
                 <td><?php echo htmlspecialchars($user['email']); ?></td>
                 <td><?php echo htmlspecialchars($user['role']); ?></td>
                 <td><?php echo htmlspecialchars($user['account_status']); ?></td>
-                <td>
+                <td style="white-space:nowrap;">
                     <form action="admin_update_role.php" method="POST" style="display:inline;">
                         <input type="hidden" name="user_id" value="<?php echo $user['user_id']; ?>">
-                        <select name="role">
+                        <select name="role" style="padding:3px 6px; font-size:12px; background-color:#1a1a1a; color:#fff; border:1px solid #444;">
                             <option value="user" <?php echo $user['role'] === 'user' ? 'selected' : ''; ?>>User</option>
                             <option value="admin" <?php echo $user['role'] === 'admin' ? 'selected' : ''; ?>>Admin</option>
                         </select>
-                        <input type="submit" value="Update Role">
+                        <input type="submit" value="Update Role" style="padding:3px 8px; font-size:11px; margin-left:4px;">
                     </form>
-                    <form action="admin_update_status.php" method="POST" style="display:inline;">
+                    <form action="admin_update_status.php" method="POST" style="display:inline; margin-left:6px;">
                         <input type="hidden" name="user_id" value="<?php echo $user['user_id']; ?>">
-			<input type="hidden" name="current_status" value="<?php echo htmlspecialchars($user['account_status']); ?>">
-                        <input type="submit" value="<?php echo $user['account_status'] === 'active' ? 'Disable' : 'Reactivate'; ?>">
+                        <input type="hidden" name="current_status" value="<?php echo htmlspecialchars($user['account_status']); ?>">
+                        <input type="submit" 
+                            value="<?php echo $user['account_status'] === 'active' ? 'Disable' : 'Reactivate'; ?>"
+                            style="padding:3px 8px; font-size:11px; background-color:<?php echo $user['account_status'] === 'active' ? '#cc0000' : '#006600'; ?>;">
                     </form>
                 </td>
             </tr>
