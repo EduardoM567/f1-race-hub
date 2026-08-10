@@ -54,6 +54,8 @@ while(!$response && $attempts < $maxAttempts){
         if($data['correlation_id'] === $corrId){
             $response = $data;
             $ch->basic_ack($result->delivery_info['delivery_tag']);
+        } else {
+            $ch->basic_ack($result->delivery_info['delivery_tag']);
         }
     }
     $attempts++;
