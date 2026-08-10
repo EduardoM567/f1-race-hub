@@ -1,5 +1,6 @@
-<!-- #Owner: Ruchir Patel rkp28 -->
 <?php
+//Owner: Ruchir Patel rkp28
+
 date_default_timezone_set('America/New_York');
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
@@ -65,7 +66,7 @@ $conn->close();
     <table border="1" cellpadding="10" cellspacing="0">
         <thead>
             <tr>
-                <th>Race Name</th>
+                <th>Race Type</th>
                 <th>Date</th>
                 <th>Location</th>
                 <th>Favorite</th>
@@ -74,7 +75,11 @@ $conn->close();
         <tbody>
             <?php foreach($response['data'] as $race): ?>
             <tr>
-                <td><?php echo htmlspecialchars($race['session_name'] ?? 'N/A'); ?></td>
+                <td>
+                    <a href='race_results.php?session_key=<?php echo urlencode($race['session_key'])?>'>
+                        <?php echo htmlspecialchars($race['session_name'] ?? 'N/A'); ?>
+                    </a>
+                </td>
                 <td><?php echo date('Y-m-d h:i:s a', strtotime($race['date_start']));?></td>
                 <td><?php  echo htmlspecialchars(($race['country_name']) . '-' . ($race['circuit_short_name']));?></td>
                 <td>

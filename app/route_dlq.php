@@ -1,5 +1,5 @@
 <?php
-# Owner: Ruchir Patel rkp28
+//Owner: Ruchir Patel rkp28
 
 #passes env values from log config
 require_once __DIR__ . '/log_config.php';

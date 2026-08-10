@@ -1,5 +1,8 @@
-<!-- #Owner: Ruchir Patel rkp28 -->
-<?php session_start(); ?>
+<?php 
+//Owner: Ruchir Patel rkp28
+
+session_start(); ?>
+
 <html>
 <body>
 <h1>Racing Dev</h1>
@@ -68,11 +71,14 @@ if (!empty($_POST['email']) && !empty($_POST['password'])){
         $ch->close();
         $conn->close();
 
+       
+
         if($response){
             if($response['success'] === true){
                 $_SESSION['user_login'] = 1;
                 $_SESSION['username'] = $response['username'];
                 $_SESSION['user_id'] = $response['user_id'];
+		$_SESSION['role'] = $response['role'] ?? 'user';
 
                 header("Location: homepage.php");
                 exit;
