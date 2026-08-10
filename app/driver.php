@@ -1,5 +1,6 @@
-<!-- #Owner: Ruchir Patel rkp28 -->
 <?php
+//Owner: Ruchir Patel rkp28
+
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
 
@@ -78,6 +79,7 @@ $conn->close();
                 <th>Driver</th>
                 <th>Driver Number</th>
                 <th>Team</th>
+                <th>Team Color</th>
                 <th>Points this Season</th>
                 <th>Championship Position</th>
                 <th>Favorite</th>
@@ -89,6 +91,7 @@ $conn->close();
                 <td><?php echo htmlspecialchars($driver['full_name'] ?? 'N/A')  ?></td>                
                 <td><?php echo htmlspecialchars($driver['driver_number'] ?? 'N/A')  ?></td>                
                 <td><?php echo htmlspecialchars($driver['team_name'] ?? 'N/A'); ?></td>
+                <td><div style="width: 30px; height: 30px; background-color: #<?php echo htmlspecialchars($driver['team_colour'] ?? 'ccc'); ?>; border: 1px solid #000;"></div></td>
                 <td><?php echo htmlspecialchars($driver['points'] ?? 'N/A'); ?></td>                
                 <td><?php echo htmlspecialchars($driver['position'] ?? 'N/A'); ?></td>
                 <td>

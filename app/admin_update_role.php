@@ -1,5 +1,5 @@
 <?php
-//Owner: Ruchir Patel rkp28
+//Owner: Eduardo Maticorena em567 + Ruchir Patel rkp28
 
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
@@ -10,25 +10,25 @@ if (!isset($_SESSION['user_login'])) {
     exit;
 }
 
-$user_id=$_SESSION['user_id'];
-$item_id=$_POST['item_id']  ?? '';
-$item_type=$_POST['item_type'] ?? '';
-$list_name= $_POST['list_name'] ?? 'My Favorites';
-$item_name=$_POST['item_name'] ?? '';
-
-if (empty($item_id) || empty($item_type)){
- echo "Missing Data";
- exit;
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    header("Location: homepage.php");
+    exit;
 }
+
+if (empty($_POST['user_id']) || empty($_POST['role'])) {
+    $_SESSION['admin_message'] = 'Missing required fields';
+    header("Location: admin.php");
+    exit;
+}
+
+$user_id = $_POST['user_id'];
+$role = $_POST['role'];
 
 $corrId = uniqid();
 $payload = json_encode([
-    'type' => 'save',
-    'user_id'=> $user_id,
-    'item_id'=> $item_id,
-    'item_type'=> $item_type,
-    'item_name' => $item_name,
-    'list_name'=> $list_name,
+    'type' => 'update_role',
+    'user_id' => $user_id,
+    'role' => $role,
     'correlation_id' => $corrId,
     'source' => gethostname(),
     'timestamp' => date('Y-m-d H:i:s')
@@ -36,16 +36,16 @@ $payload = json_encode([
 
 $conn = get_mq_connection();
 $ch = $conn->channel();
-$ch->exchange_declare('fav_exchange', 'direct', false, true, false);
+$ch->exchange_declare('admin_exchange', 'direct', false, true, false);
 
-$replyQueueName = 'fav_reply_queue';
+$replyQueueName = 'admin_reply_queue';
 $msg = new AMQPMessage($payload, [
     'content_type' => 'application/json',
     'correlation_id' => $corrId,
     'reply_to' => $replyQueueName
 ]);
 
-$ch->basic_publish($msg, 'fav_exchange', 'fav.save');
+$ch->basic_publish($msg, 'admin_exchange', 'admin.update_role');
 
 $maxAttempts = 10;
 $attempts = 0;
@@ -63,9 +63,11 @@ while(!$response && $attempts < $maxAttempts){
     $attempts++;
     usleep(500000);
 }
+
 $ch->close();
 $conn->close();
 
-header("Location: schedule.php");
+$_SESSION['admin_message'] = $response && $response['success'] ? 'Role updated successfully' : ($response['message'] ?? 'Update failed');
+header("Location: admin.php");
 exit;
 ?>

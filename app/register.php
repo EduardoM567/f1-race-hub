@@ -1,4 +1,3 @@
-<!-- #Owner: Ruchir Patel rkp28 -->
 <html>
 <body>
 <h1>Racing Dev</h1>
@@ -15,6 +14,8 @@
 </html>
 
 <?php
+//Owner: Ruchir Patel rkp28
+
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
 

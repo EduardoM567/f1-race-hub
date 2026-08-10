@@ -1,5 +1,6 @@
-<!-- #Owner: Ruchir Patel rkp28 -->
 <?php
+//Owner: Ruchir Patel rkp28
+
 require_once __DIR__ . '/log_config.php';
 use PhpAmqpLib\Message\AMQPMessage;
 
