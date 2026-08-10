@@ -1,5 +1,5 @@
 <?php
-# Owner: Ruchir Patel rkp28
+//Owner: Ruchir Patel rkp28
 
 #passes env values from log config
 require_once __DIR__ . '/log_config.php';
@@ -20,7 +20,7 @@ function route_to_dlq(array $data):void{
             'source' => gethostname(),
             'error' => 'malformed_message',
             'data' => $data,
-            'timestamp' => date('Y-m-d H:i:s')
+            'timestamp' => date('Y-m-d H:i:s'),
         ]);
 
         #sends json into a RabbitMQ message

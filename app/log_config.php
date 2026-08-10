@@ -1,5 +1,5 @@
 <?php
-# Owner: Ruchir Patel rkp28
+//Owner: Ruchir Patel rkp28
 
 #lets PHP know about the RabbitMQ library
 require_once __DIR__ . '/vendor/autoload.php';

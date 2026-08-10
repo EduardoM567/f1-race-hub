@@ -1,5 +1,6 @@
 <?php
-# Owner: Ruchir Patel rkp28
+//Owner: Ruchir Patel rkp28
+
 require_once __DIR__ . '/log_config.php';
 require_once __DIR__ . '/route_dlq.php';
 
@@ -19,7 +20,7 @@ function publish_log(string $type, string $message):void{
     #makes the json message
     $payload = json_encode([
         'source' => gethostname(),
-        'timestamp' => date('Y-m-d\TH:i:s'),
+        'timestamp' => date('Y-m-d H:i:s'),
         'level' => strtoupper($type),
         'message' => $message
     ]);
