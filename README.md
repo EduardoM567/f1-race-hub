@@ -1,43 +1,56 @@
-# Course Group Repository
+# F1 Race Hub
 
-This private repository is for one student group.
+A distributed web application built for NJIT IT490 that displays real Formula 1 data including race schedules, driver standings, race results, and a live news feed. Built with a microservices architecture across 12 Linux VMs communicating exclusively through RabbitMQ.
 
-## Project structure
+## Architecture
 
-This template uses service-based folders. Use branches to isolate parallel work.
+- **App VM** — PHP frontend served via Apache
+- **API VM** — Python consumers fetching from OpenF1 REST API
+- **DB VM** — MySQL database with Python consumers handling auth and favorites
+- **MQ VM** — RabbitMQ message broker routing all inter-service communication
 
-```txt
-/app
-/mq
-/db
-/api
-/docs
+## Features
+
+- User registration and login with bcrypt password hashing
+- F1 race schedule, driver standings, and driver detail pages
+- Race results page with finishing positions and points
+- F1 news feed from the official Formula 1 RSS feed
+- Save, view, and remove favorite drivers and races
+- User profile management (update username, email, password)
+- Admin dashboard for managing users, roles, and account status
+- Centralized logging — all production events routed through RabbitMQ to a persistent log file
+- SSH-based deployment pipeline enforcing dev→QA→production promotion with automated backups and SHA-256 verification
+
+## Technologies
+
+- **Backend:** Python, pika (RabbitMQ), MySQL Connector
+- **Frontend:** PHP, PhpAmqpLib
+- **Message Broker:** RabbitMQ with direct exchanges, dead letter queues
+- **Database:** MySQL
+- **Infrastructure:** Ubuntu Linux, Multipass, Tailscale VPN, SSH
+- **API:** OpenF1 REST API (free tier, 2025 historic data)
+- **Deployment:** Custom SSH-based promotion tool with inventory config
+
+## My Contributions
+
+- Designed and implemented the RabbitMQ message contract and queue topology used by all services
+- Built the F1 data consumer handling schedule, standings, driver, race results, and news feed requests
+- Integrated centralized logging into the production API consumer
+- Built the admin dashboard backend PHP pages and admin queue setup
+- Designed and built the SSH-based promotion tool supporting single-file and bulk release promotion
+- Set up all three API lane VMs (dev, QA, production) with Tailscale networking and SSH key auth
+- Wrote CSS styling for the entire application
+
+## Deployment Pipeline
+
+Files are promoted through lanes using a custom SSH-based tool:
+
+```bash
+python3 promote.py dev qa f1_consumer.py REL-001
+python3 promote.py qa prod --manifest release_manifest.json
 ```
+Direct dev→production promotion is blocked. Each promotion creates a release-linked backup and verifies SHA-256 checksums before and after transfer.
 
-Recommended branch naming for parallel work: `issue-12-<ucid>-<short-topic>`.
+## Team
 
-## VM ownership guidance
-
-Teams should assign individual VM ownership responsibilities (for example: `Student A = App_Dev + MQ_QA`).
-
-Recommended approach:
-
-1. Each team member owns at least one VM from each lane when applicable.
-2. Recommended: VM ownership should rotate between lanes (for example: `Student A = App_Dev + MQ_QA`).
-3. Include an approx uptime schedule
-4. Each VM should have user accounts for each team member and allow ssh into them
-
-Track current ownership and history in `docs/vm-ownership.md`.
-
-## Required completion rule
-
-An issue is complete only when:
-
-- it has at least one `type:*` label selected from the GitHub label sidebar
-- it is attached to the group project board
-- a linked pull request has been approved
-- required checks passed
-- the pull request merged into `main`
-- the issue closed through the merged pull request
-
-See `CONTRIBUTING.md` for the full workflow.
+Built by Racing Devs — NJIT IT490 Summer 2026
